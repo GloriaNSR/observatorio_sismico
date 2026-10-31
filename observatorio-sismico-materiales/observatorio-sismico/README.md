@@ -1,6 +1,6 @@
 # Material del observatorio sísmico
 
-Empieza por `ENUNCIADO.md`. Para una explicación paso a paso, consulta `FAQ-ALUMNADO.md`: contiene preguntas frecuentes, ejemplos de revisiones y duplicados y un itinerario de trabajo. Este paquete aporta el enunciado y la base cartográfica, no una solución completa del proyecto.
+La aplicación Angular se ha consolidado en la carpeta `frontend/` de la raíz del repositorio. Ejecuta las instrucciones de este documento desde esa raíz. Empieza por `ENUNCIADO.md`. Para una explicación paso a paso, consulta `FAQ-ALUMNADO.md`: contiene preguntas frecuentes, ejemplos de revisiones y duplicados y un itinerario de trabajo. Este paquete aporta el enunciado y la base cartográfica, no una solución completa del proyecto.
 
 ## 1. Ejecutar el mapa de demostración
 
