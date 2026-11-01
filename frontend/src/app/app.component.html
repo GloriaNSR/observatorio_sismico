@@ -1,6 +1,303 @@
 <main>
-  <header><p class="eyebrow">BIG DATA · PROYECTO DE AULA</p><h1>Observatorio de actividad sísmica</h1><p>Mapa base, fronteras y eventos en capas independientes.</p></header>
-  <section class="info" aria-live="polite"><strong>{{ mode() }}</strong><p>{{ status() }}</p><p>{{ countriesStatus() }} · {{ count() }} eventos dibujados · {{ omitted() }} omitidos por coordenadas inválidas</p><small>Última lectura UTC: {{ lastRead() }}<br>Generación de la respuesta UTC: {{ generated() }}</small></section>
-  <div class="map" leaflet [leafletOptions]="options" (leafletMapReady)="onMapReady($event)" aria-label="Mapa interactivo de terremotos"></div>
-  <footer><strong>Profundidad</strong><span>🟡 Menos de 70 km</span><span>🟠 70–299,99 km</span><span>🟣 300 km o más</span><span>⚪ No disponible</span><p>Tamaño: escala visual creciente con la magnitud; no representa energía ni área afectada. Sin magnitud: radio mínimo. El mapa base puede desactivarse en el selector de capas.</p><p>Base proporcionada: añade filtros, gráficos, tabla accesible y conclusiones para completar el proyecto.</p></footer>
+  <header class="page-header">
+    <p class="eyebrow">BIG DATA · OBSERVATORIO</p>
+    <h1>Observatorio de actividad sísmica</h1>
+    <p>Consulta eventos USGS, su distribución geográfica y la frescura de los datos.</p>
+  </header>
+
+  @if (filters().mode === 'replay') {
+    <aside class="replay-banner" role="status">
+      MODO REPRODUCCIÓN (REPLAY)
+      <span>El intervalo inicial está ajustado a 2025 y puede modificarse.</span>
+    </aside>
+  }
+
+  <section class="filters panel" aria-labelledby="filters-title">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">CONSULTA</p>
+        <h2 id="filters-title">Filtros</h2>
+      </div>
+      <span class="mode-badge" [class.demo-badge]="appMode() === 'demo'">
+        {{ appMode() === 'demo' ? 'DEMOSTRACIÓN · DATOS FICTICIOS' : 'API · BACKEND' }}
+      </span>
+    </div>
+    <div class="filter-grid">
+      <label>
+        Inicio (UTC)
+        <input type="datetime-local" [ngModel]="filters().start" (ngModelChange)="setStart($event)" aria-describedby="period-help">
+      </label>
+      <label>
+        Fin (UTC, exclusivo)
+        <input type="datetime-local" [ngModel]="filters().end" (ngModelChange)="setEnd($event)" aria-describedby="period-help">
+      </label>
+      <label>
+        Magnitud mínima
+        <input type="number" step="any" inputmode="decimal" placeholder="Todas" [ngModel]="filters().minMag" (ngModelChange)="setMinMag($event)">
+      </label>
+      <label>
+        País / región
+        <select [ngModel]="filters().countryId" (ngModelChange)="setCountry($event)">
+          <option value="">Todos los países</option>
+          <option value="unassigned">Sin país asignado</option>
+          @for (country of countryOptions(); track country.id) {
+            <option [value]="country.id">{{ country.name }}</option>
+          }
+        </select>
+      </label>
+      <label>
+        Modo de datos
+        <select [ngModel]="filters().mode" (ngModelChange)="setMode($event)">
+          <option value="live">En vivo (live)</option>
+          <option value="replay">Reproducción (replay)</option>
+        </select>
+      </label>
+    </div>
+    <p id="period-help" class="help-text">Las fechas se interpretan en UTC. El inicio es inclusivo y el fin exclusivo. Cada cambio actualiza eventos y estadísticas.</p>
+  </section>
+
+  <section class="system-state panel" aria-labelledby="system-title" aria-live="polite">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">OPERACIÓN</p>
+        <h2 id="system-title">Estado del sistema</h2>
+      </div>
+      <span class="connection-state" [class.connection-demo]="appMode() === 'demo'">
+        {{ refreshing() ? 'Consultando…' : status() }}
+      </span>
+    </div>
+    @if (apiError()) {
+      <p class="alert alert-error" role="alert">
+        {{ apiError() }} Se conserva la última lectura válida; su antigüedad es {{ readingAge() }}.
+      </p>
+    }
+    @if (appMode() === 'api' && stale()) {
+      <p class="alert alert-stale" role="status">
+        Datos desactualizados: última ingesta correcta de USGS
+        {{ lastIngestion() === null ? 'no disponible' : formatTimestamp(lastIngestion()) }}
+        ({{ ingestionAgeText() }}).
+      </p>
+    }
+    <dl class="state-grid">
+      <div><dt>Última lectura correcta</dt><dd>{{ lastRead() }} <span>({{ readingAge() }})</span></dd></div>
+      <div><dt>Generación de la API</dt><dd>{{ generated() }}</dd></div>
+      <div><dt>Última ingesta correcta USGS</dt><dd>{{ lastIngestion() === null ? 'ND' : formatTimestamp(lastIngestion()) }}</dd></div>
+      <div><dt>Antigüedad de ingesta</dt><dd>{{ appMode() === 'demo' ? 'No disponible en demo' : ingestionAgeText() }}</dd></div>
+      <div><dt>Periodo consultado</dt><dd>{{ period() }}</dd></div>
+      <div><dt>Filtros de la última lectura válida</dt><dd>{{ appliedFilters() }}</dd></div>
+    </dl>
+    <p class="result-summary">
+      {{ events().length }} eventos mostrados de {{ totalEvents() }} filtrados ·
+      {{ omitted() }} omitidos por coordenadas inválidas.
+      @if (nextCursor() !== null) {
+        La respuesta está paginada; carga más eventos para continuar.
+      }
+      @if (statistics(); as stats) {
+        @if (stats.metadata.complete) {
+          Las estadísticas son completas sobre el conjunto filtrado, no solo sobre esta página.
+        } @else {
+          Las estadísticas de la API no están marcadas como completas.
+        }
+      }
+    </p>
+  </section>
+
+  <section class="panel map-panel" aria-labelledby="map-title">
+    <div class="section-heading">
+      <div><p class="eyebrow">GEOGRAFÍA</p><h2 id="map-title">Mapa interactivo</h2></div>
+      <span class="map-count">{{ events().length }} eventos en la página</span>
+    </div>
+    <p class="help-text">{{ countriesStatus() }} · Las fichas muestran texto seguro y valores ausentes como ND.</p>
+    <div class="map" leaflet [leafletOptions]="options" (leafletMapReady)="onMapReady($event)" aria-label="Mapa interactivo de terremotos y fronteras de países"></div>
+    <div class="legend" aria-label="Leyenda del mapa">
+      <strong>Profundidad</strong>
+      <span><i class="swatch shallow"></i>Menos de 70 km</span>
+      <span><i class="swatch intermediate"></i>70–299,99 km</span>
+      <span><i class="swatch deep"></i>300 km o más</span>
+      <span><i class="swatch unknown"></i>ND</span>
+      <span class="legend-note">El tamaño del círculo crece con la magnitud; magnitud ausente: radio mínimo.</span>
+    </div>
+  </section>
+
+  <section class="panel table-panel" aria-labelledby="events-title">
+    <div class="section-heading">
+      <div><p class="eyebrow">DETALLE</p><h2 id="events-title">Eventos filtrados</h2></div>
+      @if (nextCursor() !== null) {
+        <button type="button" class="secondary-button" (click)="loadMoreEvents()" [disabled]="refreshing()">
+          {{ refreshing() ? 'Cargando…' : 'Cargar siguientes eventos' }}
+        </button>
+      }
+    </div>
+    @if (events().length === 0) {
+      <p class="empty-state">No hay eventos en la consulta. Si la API no responde, se conserva la última lectura válida.</p>
+    } @else {
+      <div class="table-scroll" tabindex="0" aria-label="Tabla desplazable de eventos sísmicos">
+        <table>
+          <caption>Eventos de la última página consultada. Magnitud y profundidad ND indican valores nulos.</caption>
+          <thead>
+            <tr>
+              <th scope="col">Hora de ocurrencia (UTC)</th>
+              <th scope="col">Magnitud</th>
+              <th scope="col">Profundidad</th>
+              <th scope="col">Lugar</th>
+              <th scope="col">País</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (event of events(); track $index) {
+              <tr>
+                <td>{{ formatTimestamp(event.properties.time) }}</td>
+                <td>{{ eventMagnitude(event) }}</td>
+                <td>{{ eventDepth(event) }}</td>
+                <td>{{ event.properties.place || 'Sin descripción' }}</td>
+                <td>{{ eventCountry(event) }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </section>
+
+  <section class="statistics" aria-labelledby="statistics-title">
+    <div class="section-heading stats-heading">
+      <div><p class="eyebrow">ANÁLISIS</p><h2 id="statistics-title">Gráficos y estadísticas</h2></div>
+      @if (statistics(); as stats) {
+        <span>{{ stats.metadata.total }} registros · {{ stats.metadata.complete ? 'agregados completos' : 'agregados parciales' }}</span>
+      }
+    </div>
+    @if (statistics(); as stats) {
+      <div class="chart-grid">
+        <article class="panel chart-card">
+          <h3>Recuentos por país</h3>
+          <p class="help-text">Eventos del periodo y filtros seleccionados.</p>
+          @if (stats.events_by_country.length === 0) {
+            <p class="empty-state">Sin eventos para agrupar.</p>
+          } @else {
+            <ol class="bar-list">
+              @for (row of stats.events_by_country; track row.country_id ?? row.country_name) {
+                <li>
+                  <div class="bar-label"><span>{{ row.country_name }}</span><strong>{{ row.count }}</strong></div>
+                  <div class="bar-track"><i [style.width.%]="barWidth(row.count, stats.events_by_country)"></i></div>
+                </li>
+              }
+            </ol>
+          }
+        </article>
+
+        <article class="panel chart-card">
+          <h3>Recuentos por subregión</h3>
+          <p class="help-text">Incluye la categoría «Sin país asignado».</p>
+          @if (subregionCounts().length === 0) {
+            <p class="empty-state">Sin eventos para agrupar.</p>
+          } @else {
+            <ol class="bar-list">
+              @for (row of subregionCounts(); track row.name) {
+                <li>
+                  <div class="bar-label"><span>{{ row.name }}</span><strong>{{ row.count }}</strong></div>
+                  <div class="bar-track"><i [style.width.%]="barWidth(row.count, subregionCounts())"></i></div>
+                </li>
+              }
+            </ol>
+          }
+        </article>
+
+        <article class="panel chart-card hourly-card">
+          <h3>Recuentos por hora UTC</h3>
+          <p class="help-text">
+            Ventanas fijas de una hora UTC basadas en la ocurrencia; se incluyen horas con cero eventos.
+            @if (hourlyWindowsTotal() > hourlyCounts().length) {
+              Se muestran las {{ hourlyCounts().length }} ventanas más recientes de {{ hourlyWindowsTotal() }}.
+            }
+          </p>
+          @if (hourlyCounts().length === 0) {
+            <p class="empty-state">No hay ventanas horarias en el periodo.</p>
+          } @else {
+            <ol class="bar-list">
+              @for (row of hourlyCounts(); track row.hour) {
+                <li>
+                  <div class="bar-label"><time [attr.datetime]="formatTimestamp(row.hour)">{{ row.label }}</time><strong>{{ row.count }}</strong></div>
+                  <div class="bar-track"><i [style.width.%]="barWidth(row.count, hourlyCounts())"></i></div>
+                </li>
+              }
+            </ol>
+          }
+        </article>
+
+        <article class="panel chart-card">
+          <h3>Distribución de magnitud</h3>
+          <p class="help-text">Magnitud · {{ stats.magnitude_distribution.excluded_nulls }} registros nulos excluidos.</p>
+          @if (stats.magnitude_distribution.bins.length === 0) {
+            <p class="empty-state">Sin magnitudes válidas para distribuir.</p>
+          } @else {
+            <ol class="bar-list">
+              @for (bin of stats.magnitude_distribution.bins; track bin.range) {
+                <li>
+                  <div class="bar-label"><span>{{ bin.range }}</span><strong>{{ bin.count }}</strong></div>
+                  <div class="bar-track"><i [style.width.%]="barWidth(bin.count, stats.magnitude_distribution.bins)"></i></div>
+                </li>
+              }
+            </ol>
+          }
+        </article>
+
+        <article class="panel chart-card">
+          <h3>Distribución de profundidad</h3>
+          <p class="help-text">Kilómetros · {{ stats.depth_distribution.excluded_nulls }} registros nulos excluidos.</p>
+          @if (stats.depth_distribution.bins.length === 0) {
+            <p class="empty-state">Sin profundidades válidas para distribuir.</p>
+          } @else {
+            <ol class="bar-list">
+              @for (bin of stats.depth_distribution.bins; track bin.range) {
+                <li>
+                  <div class="bar-label"><span>{{ bin.range }}</span><strong>{{ bin.count }}</strong></div>
+                  <div class="bar-track"><i [style.width.%]="barWidth(bin.count, stats.depth_distribution.bins)"></i></div>
+                </li>
+              }
+            </ol>
+          }
+        </article>
+
+        <article class="panel chart-card comparison-card">
+          <h3>Comparación histórica</h3>
+          <p class="help-text">
+            Magnitud ≥ {{ stats.historical_comparison.minimum_magnitude }} y filtro geográfico aplicable.
+            La comparación fija las últimas 24 h live frente al año 2025 replay; no hereda el periodo ni el modo general del panel.
+          </p>
+          <dl class="comparison-grid">
+            <div>
+              <dt>Últimas 24 h (live)</dt>
+              <dd>{{ stats.historical_comparison.live_last_24h.count }}</dd>
+            </div>
+            <div>
+              <dt>Media diaria de 2025 (replay)</dt>
+              <dd>{{ stats.historical_comparison.replay_2025.daily_average | number:'1.0-2' }}</dd>
+            </div>
+            <div>
+              <dt>Variación frente a la media</dt>
+              <dd>
+                @if (historicalVariation() === null) {
+                  ND
+                } @else {
+                  {{ historicalVariation() | number:'1.0-1' }}%
+                }
+              </dd>
+            </div>
+          </dl>
+          <p class="comparison-note">
+            La media de 2025 divide el total entre {{ stats.historical_comparison.replay_2025.days }} días e incluye días con cero eventos.
+            El último periodo puede estar incompleto por retrasos de publicación en USGS.
+          </p>
+        </article>
+      </div>
+    } @else {
+      <p class="panel empty-state">
+        @if (appMode() === 'demo') {
+          Las estadísticas están disponibles al configurar el modo API.
+        } @else {
+          Aún no hay estadísticas válidas; se conservará la última respuesta correcta ante errores.
+        }
+      </p>
+    }
+  </section>
 </main>

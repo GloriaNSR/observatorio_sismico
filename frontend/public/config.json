@@ -1,6 +1,6 @@
 {
-  "mode": "demo",
-  "apiUrl": "https://TU-DOMINIO-NGROK",
+  "mode": "api",
+  "apiUrl": "http://localhost:8000",
   "refreshMs": 60000,
   "skipNgrokWarning": true
 }

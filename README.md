@@ -104,15 +104,15 @@ Cambia `frontend/public/config.json`:
 ```json
 {
   "mode": "api",
-  "apiUrl": "https://TU-DOMINIO-ASIGNADO",
+  "apiUrl": "http://localhost:8000",
   "refreshMs": 60000,
   "skipNgrokWarning": true
 }
 ```
 
-`apiUrl` no termina en `/api`: el componente añade `/api/eventos`. Usa el dominio asignado realmente a tu cuenta. Recarga la página después de cambiar la configuración. Configura CORS en el backend. Una llamada OPTIONS puede preceder al GET por la cabecera de ngrok; no la bloquees.
+La configuración versionada funciona directamente con el backend local. Para Netlify/ngrok cambia únicamente `apiUrl` por la URL HTTPS asignada, sin añadir `/api`; el panel consulta `/api/eventos`, `/api/estadisticas` y `/api/salud`. El cliente envía `ngrok-skip-browser-warning: true` cuando `skipNgrokWarning` está habilitado. Configura CORS en el backend para `http://localhost:4200` y el origen exacto de Netlify, permitiendo GET/OPTIONS y esa cabecera. Una llamada OPTIONS puede preceder al GET por la cabecera de ngrok; no la bloquees. Recarga la página después de cambiar la configuración.
 
-La consulta se programa después de terminar la anterior, evitando peticiones solapadas. El timeout es de 15 segundos. Si falla, se conserva la capa anterior y se muestra un aviso. Al destruir el componente se cancela la petición y el temporizador. La interfaz inicial muestra cuándo se leyó y generó la respuesta; añade la última ingesta real de USGS para detectar un productor parado.
+El panel comparte los filtros entre mapa, tabla y estadísticas; el replay selecciona inicialmente el año 2025 y permite ajustar el intervalo. La consulta periódica se programa después de terminar la anterior para evitar solapamientos. El timeout es de 15 segundos. Si falla la API o el túnel, se conserva la última respuesta válida y se muestra su antigüedad. La interfaz presenta además la última ingesta correcta de USGS, la paginación, los valores ND y el aviso de datos desactualizados. El modo demo sigue disponible como alternativa explícita de datos ficticios.
 
 ## 6. Publicar en Netlify
 
@@ -129,7 +129,7 @@ No requiere SSR. Si integras el componente en una aplicación SSR existente, car
 
 ## 7. Lo que debes desarrollar
 
-La fase actual incluye productor, consumidor, almacenamiento, API, ingesta histórica, integración espacial y agregaciones. El mapa se entrega para que el trabajo se centre en los datos; la interfaz Angular ampliada y las pruebas de aceptación siguen pendientes. La clasificación por país que aparece en el popup la entrega el backend; dibujar fronteras no calcula automáticamente esa clasificación.
+La Fase 6 completa el panel Angular con filtros sincronizados, mapa, tabla accesible, estadísticas y estado de salud para la API; `frontend/public/config.json` queda preparado para el backend local y permite cambiar solo `apiUrl` al publicar. La siguiente Fase 7 reúne las pruebas de aceptación, mediciones y memoria. La clasificación por país que aparece en el popup la entrega el backend; dibujar fronteras no calcula automáticamente esa clasificación.
 
 En `ENUNCIADO.md` tienes las pruebas y la rúbrica. En `FUENTES-Y-LICENCIAS.md`, procedencia y condiciones. En `VALIDACION.md`, las comprobaciones realizadas sobre el material base.
 
