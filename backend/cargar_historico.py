@@ -1,4 +1,9 @@
-"""Descarga, archiva y reproduce en Kafka el catálogo sísmico USGS de 2025."""
+"""Descarga, archiva y reproduce en Kafka el catálogo sísmico USGS de 2025.
+
+Cumple el requisito de importar un histórico reproducible, preservar el GeoJSON,
+evitar duplicados de frontera sin eliminar revisiones y publicar cada mensaje
+con ACK de Kafka en el modo aislado `replay`.
+"""
 
 import argparse
 import asyncio
@@ -22,22 +27,26 @@ LIMITE_USGS = 20000
 
 
 def _a_utc(valor: datetime) -> datetime:
+    """Valida que el intervalo tenga zona horaria y lo normaliza a UTC."""
     if valor.tzinfo is None:
         raise ValueError("Los intervalos deben incluir zona horaria")
     return valor.astimezone(timezone.utc)
 
 
 def _a_milisegundos(valor: datetime) -> int:
+    """Convierte una fecha de intervalo a milisegundos Unix."""
     return int(_a_utc(valor).timestamp() * 1000)
 
 
 def _desde_milisegundos(valor: int) -> datetime:
+    """Reconstruye una fecha UTC a partir de milisegundos Unix."""
     return datetime.fromtimestamp(valor / 1000, tz=timezone.utc)
 
 
 def subdividir_intervalo(
     inicio: datetime, fin_exclusivo: datetime
 ) -> tuple[tuple[datetime, datetime], tuple[datetime, datetime]]:
+    """Divide un intervalo temporal en dos tramos contiguos sin huecos."""
     inicio = _a_utc(inicio)
     fin_exclusivo = _a_utc(fin_exclusivo)
     inicio_ms = _a_milisegundos(inicio)
@@ -50,6 +59,7 @@ def subdividir_intervalo(
 
 
 def _clave_evento(feature: Any) -> tuple[Any, Any]:
+    """Forma la clave (id, updated) que distingue duplicados de revisiones."""
     if not isinstance(feature, dict):
         return "invalid", json.dumps(feature, sort_keys=True, default=str)
     properties = feature.get("properties")
@@ -61,7 +71,7 @@ def _clave_evento(feature: Any) -> tuple[Any, Any]:
 
 
 def deduplicar_eventos(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Elimina solapes exactos de borde, preservando revisiones distintas."""
+    """Elimina solapes exactos por (id, updated), preservando revisiones distintas."""
     unicos: dict[tuple[Any, Any], dict[str, Any]] = {}
     for feature in features:
         unicos.setdefault(_clave_evento(feature), feature)
@@ -69,7 +79,9 @@ def deduplicar_eventos(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def ordenar_eventos(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Ordena por ocurrencia, revisión y finalmente identificador."""
     def clave(feature: dict[str, Any]) -> tuple[int, int, str]:
+        """Crea la clave determinista usada para ordenar una entidad."""
         properties = feature.get("properties") or {}
         return (
             properties.get("time", 0),
@@ -81,7 +93,7 @@ def ordenar_eventos(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def crear_casos_controlados() -> list[dict[str, Any]]:
-    """Construye eventos replay repetibles, aislados del año histórico 2025."""
+    """Construye duplicado y revisión sintéticos fuera del intervalo histórico 2025."""
     original = {
         "type": "Feature",
         "id": "demo-replay-revision-controlada",
@@ -103,6 +115,7 @@ def crear_casos_controlados() -> list[dict[str, Any]]:
 
 
 def _intervalos_mensuales() -> list[tuple[datetime, datetime]]:
+    """Genera los doce intervalos UTC semiabiertos que cubren el año 2025."""
     intervalos = []
     for mes in range(1, 13):
         inicio = datetime(ANIO, mes, 1, tzinfo=timezone.utc)
@@ -115,10 +128,12 @@ def _intervalos_mensuales() -> list[tuple[datetime, datetime]]:
 
 
 def _nombre_cache(inicio: datetime, fin: datetime) -> str:
+    """Construye un nombre determinista para la caché del segmento."""
     return f"segmento_{_a_milisegundos(inicio)}_{_a_milisegundos(fin)}.geojson"
 
 
 def _leer_json(ruta: Path) -> dict[str, Any]:
+    """Lee un GeoJSON archivado y exige un FeatureCollection válido."""
     with ruta.open(encoding="utf-8") as archivo:
         contenido = json.load(archivo)
     if (
@@ -131,6 +146,7 @@ def _leer_json(ruta: Path) -> dict[str, Any]:
 
 
 def _guardar_json_atomico(ruta: Path, contenido: Any) -> None:
+    """Escribe el archivo temporal y lo reemplaza para evitar cachés parciales."""
     temporal = ruta.with_suffix(ruta.suffix + ".tmp")
     with temporal.open("w", encoding="utf-8", newline="\n") as archivo:
         json.dump(contenido, archivo, ensure_ascii=False, separators=(",", ":"))
@@ -139,6 +155,7 @@ def _guardar_json_atomico(ruta: Path, contenido: Any) -> None:
 
 
 def _leer_manifest(ruta: Path) -> dict[str, Any]:
+    """Carga el manifiesto del año esperado o crea su estructura inicial."""
     if ruta.exists():
         with ruta.open(encoding="utf-8") as archivo:
             contenido = json.load(archivo)
@@ -155,6 +172,7 @@ def _actualizar_manifest(
     manifest: dict[str, Any],
     registro: dict[str, Any],
 ) -> None:
+    """Actualiza el registro de segmento y guarda el manifiesto de forma atómica."""
     queries = manifest["queries"]
     for indice, existente in enumerate(queries):
         if existente.get("cache_file") == registro["cache_file"]:
@@ -177,6 +195,7 @@ def _solicitar_segmento(
     timeout: float,
     max_attempts: int,
 ) -> tuple[list[dict[str, Any]], int]:
+    """Reutiliza la caché o descarga un segmento con límites y reintentos."""
     cache_file = _nombre_cache(inicio, fin_exclusivo)
     cache_path = directory / cache_file
     start_ms = _a_milisegundos(inicio)
@@ -277,6 +296,7 @@ def validar_cobertura(
     inicio: datetime,
     fin_exclusivo: datetime,
 ) -> None:
+    """Verifica que los segmentos cubran el año exactamente, sin huecos ni solapes."""
     ordenados = sorted(
         ((_a_utc(a), _a_utc(b)) for a, b in intervalos), key=lambda par: par[0]
     )
@@ -296,6 +316,7 @@ def descargar_historico(
     timeout: float = 90,
     max_attempts: int = 5,
 ) -> list[dict[str, Any]]:
+    """Descarga el catálogo anual por segmentos, verifica cobertura y archiva deduplicado."""
     directory = Path(directorio) / str(ANIO)
     directory.mkdir(parents=True, exist_ok=True)
     manifest_path = directory / "manifest.json"
@@ -315,6 +336,7 @@ def descargar_historico(
     def descargar_intervalo(
         inicio: datetime, fin_exclusivo: datetime
     ) -> list[dict[str, Any]]:
+        """Subdivide recursivamente un tramo que se aproxima al límite de USGS."""
         nonlocal conteo_reportado
         resultado, count = _solicitar_segmento(
             http,
@@ -373,6 +395,7 @@ def descargar_historico(
 
 
 def _sobre(feature: dict[str, Any], source: str, run_id: str) -> dict[str, Any]:
+    """Envuelve el Feature con procedencia y modo replay sin cambiar sus fechas."""
     return {
         "source": source,
         "ingested_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
@@ -391,6 +414,7 @@ async def publicar_eventos_replay(
     max_events: int | None = None,
     include_controlled_cases: bool = True,
 ) -> int:
+    """Publica el histórico ordenado, con ritmo acelerado configurable y ACK por evento."""
     if speed_factor <= 0:
         raise ValueError("REPLAY_SPEED_FACTOR debe ser mayor que cero")
     ordered = ordenar_eventos(features)
@@ -438,6 +462,7 @@ async def publicar_eventos_replay(
 
 
 async def ejecutar(args: argparse.Namespace) -> None:
+    """Ejecuta la acción elegida: descargar, reproducir o realizar ambas."""
     directory = Path(args.directorio)
     archive_path = directory / str(ANIO) / "eventos_2025.geojson"
     if args.accion != "solo-reproducir" or not archive_path.exists():
@@ -464,6 +489,7 @@ async def ejecutar(args: argparse.Namespace) -> None:
 
 
 def construir_parser() -> argparse.ArgumentParser:
+    """Define las opciones de descarga y reproducción de la herramienta."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--accion",
@@ -487,6 +513,7 @@ def construir_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """Configura el registro y ejecuta la interfaz de línea de comandos."""
     logging.basicConfig(
         level=os.getenv("LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",

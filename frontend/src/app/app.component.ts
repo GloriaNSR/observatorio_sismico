@@ -17,6 +17,30 @@ type EventProperties = {
   country_name?: string | null;
 };
 type Earthquake = Feature<Point, EventProperties>;
+const DIRECTIONS_ES: Record<string, string> = {
+  N: 'norte',
+  NNE: 'norte-noreste',
+  NE: 'noreste',
+  ENE: 'este-noreste',
+  E: 'este',
+  ESE: 'este-sureste',
+  SE: 'sureste',
+  SSE: 'sur-sureste',
+  S: 'sur',
+  SSW: 'sur-suroeste',
+  SW: 'suroeste',
+  WSW: 'oeste-suroeste',
+  W: 'oeste',
+  WNW: 'oeste-noroeste',
+  NW: 'noroeste',
+  NNW: 'norte-noroeste'
+};
+const COUNTRY_NAMES_ES: Record<string, string> = {
+  ethiopia: 'Etiopía',
+  japan: 'Japón',
+  mexico: 'México',
+  taiwan: 'Taiwán'
+};
 type EventMetadata = {
   generated?: number;
   last_ingestion?: number | null;
@@ -199,10 +223,12 @@ export class AppComponent implements OnDestroy {
   private destroyed = false;
 
   constructor() {
+    // Actualiza el reloj visible para calcular la antigüedad de las lecturas e ingestas.
     this.ageTimer = setInterval(() => this.ageTick.set(Date.now()), 30000);
   }
 
   async onMapReady(map: L.Map): Promise<void> {
+    // Prepara capas, catálogo geográfico y configuración antes de consultar los datos.
     this.map = map;
     const base = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
@@ -243,7 +269,7 @@ export class AppComponent implements OnDestroy {
       this.appMode.set(config.mode);
       this.status.set(config.mode === 'demo'
         ? 'DEMOSTRACIÓN · datos ficticios; no representa actividad real'
-        : 'API · conectando con el backend');
+        : 'API · conectando con el servidor');
       await this.refresh();
     } catch (error) {
       if (!this.destroyed) {
@@ -255,6 +281,7 @@ export class AppComponent implements OnDestroy {
   }
 
   setStart(value: string): void {
+    // Todos los filtros pasan por el mismo refresco para mantener eventos y estadísticas sincronizados.
     this.filters.update(current => ({ ...current, start: value }));
     this.scheduleRefresh();
   }
@@ -289,6 +316,7 @@ export class AppComponent implements OnDestroy {
   }
 
   async loadMoreEvents(): Promise<void> {
+    // Añade la página siguiente con los filtros vigentes; las estadísticas describen el conjunto completo.
     const config = this.config;
     const offset = this.nextCursor();
     if (!config || config.mode !== 'api' || offset === null || this.refreshing()) return;
@@ -346,6 +374,46 @@ export class AppComponent implements OnDestroy {
 
   eventCountry(event: Earthquake): string {
     return event.properties?.country_name || 'Sin país asignado';
+  }
+
+  formatPlace(value: string | null | undefined): string {
+    const place = value?.trim();
+    if (!place) return 'Sin descripción';
+
+    const distance = place.match(/^(\d+(?:\.\d+)?)\s*km\s+(NNE|NE|ENE|ESE|SE|SSE|SSW|SW|WSW|WNW|NW|NNW|N|E|S|W)\s+of\s+(.+)$/i);
+    if (distance) {
+      const direction = distance[2].toUpperCase();
+      return `${distance[1]} km al ${DIRECTIONS_ES[direction]} de ${this.translatePlaceName(distance[3])}`;
+    }
+
+    const region = place.match(/^(.+?),\s*(.+?)\s+region$/i);
+    if (region) {
+      const country = COUNTRY_NAMES_ES[region[2].toLowerCase()] ?? region[2];
+      return `${this.translatePlaceName(region[1])}, región de ${country}`;
+    }
+
+    const islandRegion = place.match(/^(.+?)\s+Islands region$/i);
+    if (islandRegion) return `Región de las islas ${islandRegion[1]}`;
+
+    const namedRegion = place.match(/^(.+?)\s+region$/i);
+    if (namedRegion) return `Región de ${this.translatePlaceName(namedRegion[1])}`;
+
+    return this.translatePlaceName(place);
+  }
+
+  private translatePlaceName(place: string): string {
+    const geographicFeature = place.match(/^(.+?)\s+(Islands|Island|Ridge|Trench|Basin)$/i);
+    if (!geographicFeature) return place;
+
+    const featureNames: Record<string, string> = {
+      islands: 'Islas',
+      island: 'Isla',
+      ridge: 'Dorsal',
+      trench: 'Fosa',
+      basin: 'Cuenca'
+    };
+    const feature = featureNames[geographicFeature[2].toLowerCase()];
+    return `${feature} ${geographicFeature[1]}`;
   }
 
   formatTimestamp(value: number | null | undefined): string {
@@ -427,6 +495,7 @@ export class AppComponent implements OnDestroy {
       }
 
       const base = config.apiUrl.replace(/\/+$/, '');
+      // Reutiliza exactamente los mismos parámetros para que eventos y estadísticas representen el mismo corte.
       const [page, statistics, health] = await Promise.all([
         this.fetchEvents(config, query, controller.signal),
         this.readJson<ApiStatistics>(
@@ -459,6 +528,7 @@ export class AppComponent implements OnDestroy {
       this.status.set('API accesible · mapa, tabla y estadísticas actualizados con los mismos filtros.');
     } catch (error) {
       if (!controller.signal.aborted && requestId === this.requestId && !this.destroyed) {
+        // No se borran los últimos datos válidos: el error se informa y se reintenta en el siguiente sondeo.
         this.apiError.set(this.errorMessage(error));
         this.status.set('Falló la actualización; se conserva en pantalla la última lectura válida.');
       }
@@ -471,6 +541,7 @@ export class AppComponent implements OnDestroy {
   }
 
   private scheduleRefresh(): void {
+    // Agrupa cambios rápidos y cancela la consulta anterior para evitar resultados de filtros obsoletos.
     const config = this.config;
     if (!config || this.destroyed) return;
     clearTimeout(this.pollTimer);
@@ -495,6 +566,7 @@ export class AppComponent implements OnDestroy {
     query: URLSearchParams,
     signal: AbortSignal
   ): Promise<Events> {
+    // El mismo URLSearchParams se comparte con /api/estadisticas desde refresh().
     const url = `${config.apiUrl.replace(/\/+$/, '')}/api/eventos?${query.toString()}`;
     const data = await this.readJson<Events>(url, this.apiHeaders(config), signal);
     this.validateEvents(data);
@@ -537,6 +609,7 @@ export class AppComponent implements OnDestroy {
     headers: Record<string, string>,
     signal: AbortSignal
   ): Promise<T> {
+    // Expone errores HTTP/JSON y aplica un límite de espera sin ocultar fallos del servidor.
     const response = await fetch(url, {
       headers,
       cache: 'no-store',
@@ -567,7 +640,7 @@ export class AppComponent implements OnDestroy {
       throw new Error('mode debe ser "api" o "demo".');
     }
     if (typeof config.apiUrl !== 'string' || !config.apiUrl.trim()) {
-      throw new Error('apiUrl debe indicar la URL del backend.');
+      throw new Error('apiUrl debe indicar la URL del servidor.');
     }
     if (!Number.isFinite(config.refreshMs) || config.refreshMs <= 0) {
       throw new Error('refreshMs debe ser un número positivo.');
@@ -604,6 +677,7 @@ export class AppComponent implements OnDestroy {
   }
 
   private replaceEvents(features: Earthquake[]): void {
+    // Sustituye la capa completa antes de añadir los puntos, evitando duplicados tras cada actualización.
     const next = L.layerGroup();
     let omitted = 0;
     for (const feature of features) {
@@ -625,7 +699,7 @@ export class AppComponent implements OnDestroy {
         : depth < 70 ? '#d99b00' : depth < 300 ? '#e35b37' : '#7b3fb6';
       const popup = document.createElement('div');
       popup.textContent = [
-        properties.place ?? 'Sin descripción',
+        this.formatPlace(properties.place),
         `Magnitud: ${magnitude === null ? 'ND' : magnitude}`,
         `Profundidad: ${depth === null ? 'ND' : `${depth} km`}`,
         `Fecha UTC: ${this.formatTimestamp(properties.time)}`,
@@ -667,7 +741,7 @@ export class AppComponent implements OnDestroy {
       : filters.countryId
         ? ` · país ${this.countryOptions().find(option => option.id === filters.countryId)?.name ?? filters.countryId}`
         : ' · todos los países';
-    return `${filters.mode === 'replay' ? 'replay' : 'live'} · ${period}${magnitude}${country}`;
+    return `${filters.mode === 'replay' ? 'reproducción histórica' : 'tiempo real'} · ${period}${magnitude}${country}`;
   }
 
   private markSuccessfulRead(): void {
@@ -688,8 +762,8 @@ export class AppComponent implements OnDestroy {
     if (error instanceof DOMException && error.name === 'AbortError') return 'La consulta fue cancelada.';
     if (error instanceof Error && error.name === 'TimeoutError') return 'Tiempo de espera agotado (15 s).';
     if (error instanceof TypeError) {
-      return `Falló la petición HTTP (${error.message}); comprueba que el backend, CORS y el túnel estén disponibles.`;
+      return `Falló la petición HTTP (${error.message}); comprueba que el servidor, CORS y el túnel estén disponibles.`;
     }
-    return error instanceof Error ? error.message : 'Error desconocido al consultar el backend.';
+    return error instanceof Error ? error.message : 'Error desconocido al consultar el servidor.';
   }
 }

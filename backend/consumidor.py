@@ -1,4 +1,9 @@
-"""Valida eventos Kafka y los persiste en PostgreSQL de forma idempotente."""
+"""Valida mensajes Kafka, cruza puntos con países y persiste hechos y revisiones.
+
+Cumple las reglas de calidad del contrato GeoJSON, calcula el país mediante
+Point-in-Polygon sobre 177 polígonos en EPSG:4326, conserva como NULL los países
+no asignados y confirma el offset Kafka solo después del commit PostgreSQL.
+"""
 
 import asyncio
 import json
@@ -25,6 +30,7 @@ class IndicePaises:
     indice_espacial: Any
 
     def country_for_point(self, longitude: float, latitude: float) -> str | None:
+        """Devuelve el país que contiene el punto, o None si no cae en un polígono."""
         punto = Point(longitude, latitude)
         posiciones = self.indice_espacial.query(punto, predicate="within")
         for posicion in posiciones:
@@ -36,6 +42,8 @@ class IndicePaises:
 
 @dataclass(frozen=True)
 class EventoValidado:
+    """Representa los campos validados y normalizados para las tablas de hechos."""
+
     event_id: str
     time_ms: int
     updated_ms: int
@@ -53,6 +61,7 @@ class EventoValidado:
 
 
 def _es_numero_finito(valor: Any) -> bool:
+    """Comprueba que el dato sea numérico finito y no un booleano de Python."""
     return (
         isinstance(valor, (int, float))
         and not isinstance(valor, bool)
@@ -61,6 +70,7 @@ def _es_numero_finito(valor: Any) -> bool:
 
 
 def _valor_numerico_opcional(valor: Any, nombre: str) -> float | None:
+    """Valida magnitud o profundidad permitiendo NULL sin sustituirlo por cero."""
     if valor is None:
         return None
     if not _es_numero_finito(valor):
@@ -69,6 +79,7 @@ def _valor_numerico_opcional(valor: Any, nombre: str) -> float | None:
 
 
 def _datetime_epoch_utc(milisegundos: int, nombre: str) -> datetime:
+    """Convierte milisegundos Unix a UTC y transforma desbordamientos en error de calidad."""
     try:
         return datetime.fromtimestamp(milisegundos / 1000, tz=timezone.utc)
     except (OverflowError, OSError, ValueError) as error:
@@ -76,6 +87,7 @@ def _datetime_epoch_utc(milisegundos: int, nombre: str) -> datetime:
 
 
 def validar_evento(feature: Any, indice_paises: IndicePaises) -> EventoValidado:
+    """Aplica el contrato USGS, valida WGS84 y asigna país con cruce espacial PIP."""
     if not isinstance(feature, dict) or feature.get("type") != "Feature":
         raise ValueError("El evento no es un Feature GeoJSON")
 
@@ -148,6 +160,7 @@ def validar_evento(feature: Any, indice_paises: IndicePaises) -> EventoValidado:
 
 
 def cargar_paises(conexion, ruta_geojson: str) -> IndicePaises:
+    """Carga los 177 países, normaliza su CRS a EPSG:4326 y construye el índice espacial."""
     geodataframe = gpd.read_file(ruta_geojson)
     if "ADM0_A3" not in geodataframe.columns:
         raise ValueError("paises.geojson no contiene la propiedad ADM0_A3")
@@ -206,6 +219,7 @@ def cargar_paises(conexion, ruta_geojson: str) -> IndicePaises:
 
 
 def _instante_ingesta(envelope: dict[str, Any]) -> datetime:
+    """Lee la marca de ingesta del sobre o usa el instante actual en UTC."""
     valor = envelope.get("ingested_at")
     if isinstance(valor, str):
         try:
@@ -218,6 +232,7 @@ def _instante_ingesta(envelope: dict[str, Any]) -> datetime:
 
 
 def _rechazar_constante_json(valor: str) -> None:
+    """Rechaza NaN e infinitos, que no pertenecen al estándar JSON."""
     raise ValueError(f"Constante JSON no estándar: {valor}")
 
 
@@ -230,6 +245,7 @@ def _registrar_cuarentena(
     ingested_at: datetime,
     raw_json: Any,
 ) -> None:
+    """Persiste el motivo y el JSON original rechazado para auditoría."""
     with conexion:
         with conexion.cursor() as cursor:
             cursor.execute(
@@ -252,7 +268,7 @@ def procesar_mensaje(
     indice_paises: IndicePaises,
     valor: bytes,
 ) -> bool:
-    """Persiste el evento o su cuarentena; retorna True si se aceptó."""
+    """Valida y persiste una revisión idempotente o registra su causa en cuarentena."""
     try:
         envelope = json.loads(valor, parse_constant=_rechazar_constante_json)
         if not isinstance(envelope, dict):
@@ -379,12 +395,14 @@ async def procesar_y_confirmar_offset(
     indice_paises: IndicePaises,
     valor: bytes,
 ) -> bool:
+    """Confirma el offset únicamente tras terminar la transacción PostgreSQL."""
     aceptado = procesar_mensaje(conexion, indice_paises, valor)
     await consumer.commit()
     return aceptado
 
 
 def conectar_postgres():
+    """Abre la conexión de trabajo del consumidor con un tiempo límite."""
     return psycopg2.connect(
         host=os.getenv("POSTGRES_HOST", "postgres"),
         port=int(os.getenv("POSTGRES_PORT", "5432")),
@@ -396,6 +414,7 @@ def conectar_postgres():
 
 
 async def main() -> None:
+    """Prepara el catálogo y consume Kafka con confirmación manual de offsets."""
     logging.basicConfig(
         level=os.getenv("LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",

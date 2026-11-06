@@ -1,4 +1,9 @@
-"""API HTTP de consulta del observatorio sísmico."""
+"""API de consulta de eventos, salud y estadísticas del observatorio.
+
+Cumple el contrato HTTP para los modos aislados `live` y `replay`, aplica
+filtros temporales/geográficos comunes y devuelve magnitudes, profundidades y
+asignaciones ausentes preservando sus valores NULL.
+"""
 
 import logging
 import math
@@ -25,6 +30,8 @@ HISTORY_END = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 @dataclass(frozen=True)
 class Filtros:
+    """Conjunto normalizado de filtros compartido por eventos y estadísticas."""
+
     start: datetime | None
     end: datetime | None
     min_mag: float | None
@@ -33,6 +40,7 @@ class Filtros:
 
 
 def _origenes_cors() -> list[str]:
+    """Reúne los orígenes locales y publicados permitidos por la configuración."""
     origenes = {"http://localhost:4200"}
     for variable in ("CORS_ORIGINS", "NETLIFY_ORIGIN"):
         for origen in os.getenv(variable, "").split(","):
@@ -54,6 +62,7 @@ app.add_middleware(
 
 @app.exception_handler(psycopg2.Error)
 async def manejar_error_postgres(_request: Request, error: psycopg2.Error):
+    """Registra fallos de base de datos y los expone como HTTP 503 explícito."""
     LOGGER.error(
         "Error al consultar PostgreSQL",
         exc_info=(type(error), error, error.__traceback__),
@@ -65,6 +74,7 @@ async def manejar_error_postgres(_request: Request, error: psycopg2.Error):
 
 
 def conectar_postgres():
+    """Abre una conexión PostgreSQL con tiempo límite configurable."""
     return psycopg2.connect(
         host=os.getenv("POSTGRES_HOST", "postgres"),
         port=int(os.getenv("POSTGRES_PORT", "5432")),
@@ -76,6 +86,7 @@ def conectar_postgres():
 
 
 def _parsear_fecha(valor: str | None, nombre: str) -> datetime | None:
+    """Exige fecha ISO-8601 con zona horaria y la normaliza a UTC."""
     if valor is None:
         return None
     try:
@@ -102,6 +113,7 @@ def _validar_filtros(
     *,
     ahora: datetime | None = None,
 ) -> Filtros:
+    """Valida parámetros de consulta y define las últimas 24 horas por omisión."""
     inicio = _parsear_fecha(start, "start")
     fin = _parsear_fecha(end, "end")
     if inicio is None and fin is None:
@@ -125,6 +137,7 @@ def _validar_filtros(
 
 
 def _where(filtros: Filtros) -> tuple[str, list[Any]]:
+    """Construye condiciones parametrizadas comunes para endpoints y modo."""
     clausulas = ["e.mode = %s"]
     parametros: list[Any] = [filtros.mode]
     if filtros.start is not None:
@@ -145,6 +158,7 @@ def _where(filtros: Filtros) -> tuple[str, list[Any]]:
 
 
 def _where_geografico(country_id: str | None) -> tuple[str, list[Any]]:
+    """Construye el filtro geográfico reutilizable por la comparación histórica."""
     if country_id == "unassigned":
         return "e.country_id IS NULL", []
     if country_id is not None:
@@ -153,12 +167,14 @@ def _where_geografico(country_id: str | None) -> tuple[str, list[Any]]:
 
 
 def _milisegundos(fecha: datetime | None) -> int | None:
+    """Serializa una fecha opcional como milisegundos Unix."""
     if fecha is None:
         return None
     return int(fecha.timestamp() * 1000)
 
 
 def _ultima_ingesta(cursor) -> int | None:
+    """Obtiene el último instante registrado por el productor en vivo."""
     cursor.execute(
         "SELECT last_ingestion_ms FROM estado_ingesta WHERE source = %s",
         (SOURCE_LIVE,),
@@ -168,6 +184,7 @@ def _ultima_ingesta(cursor) -> int | None:
 
 
 def _consultar_eventos(cursor, filtros: Filtros, limit: int, offset: int):
+    """Cuenta y pagina eventos actuales con los filtros y orden temporal solicitados."""
     where_sql, parametros = _where(filtros)
     cursor.execute(
         f"SELECT COUNT(*) FROM evento_actual e WHERE {where_sql}",
@@ -192,6 +209,7 @@ def _consultar_eventos(cursor, filtros: Filtros, limit: int, offset: int):
 
 
 def _feature_geojson(fila: tuple[Any, ...]) -> dict[str, Any]:
+    """Convierte una fila de PostgreSQL a Feature GeoJSON sin reemplazar NULL."""
     (
         event_id,
         time_ms,
@@ -238,6 +256,7 @@ def obtener_eventos(
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
+    """Devuelve eventos paginados y metadatos aplicando filtros del contrato API."""
     ahora = datetime.now(timezone.utc)
     filtros = _validar_filtros(
         start, end, min_mag, country_id, mode, ahora=ahora
@@ -266,6 +285,7 @@ def obtener_eventos(
 
 @app.get("/api/salud")
 def obtener_salud() -> dict[str, Any]:
+    """Informa disponibilidad de PostgreSQL y antigüedad de la última ingesta."""
     ahora = datetime.now(timezone.utc)
     umbral = int(os.getenv("INGESTION_STALE_SECONDS", "180"))
     with closing(conectar_postgres()) as conexion:
@@ -287,6 +307,7 @@ def obtener_salud() -> dict[str, Any]:
 
 
 def _obtener_distribucion(cursor, where_sql: str, parametros: list[Any]):
+    """Calcula conteos y distribuciones, informando nulos en vez de inventar valores."""
     cursor.execute(
         f"""
         SELECT COUNT(*),
@@ -350,6 +371,7 @@ def _obtener_distribucion(cursor, where_sql: str, parametros: list[Any]):
 def _etiqueta_bin(
     bucket: int, minimo: float, ancho: float, numero_bins: int, tipo: str
 ) -> str:
+    """Etiqueta un intervalo de magnitud o profundidad para la respuesta estadística."""
     if bucket == 0:
         return "<0" if tipo == "magnitud" else "<0 km"
     if bucket == numero_bins + 1:
@@ -365,6 +387,7 @@ def _etiqueta_bin(
 def _obtener_comparativa(
     cursor, filtros: Filtros, ahora: datetime
 ) -> dict[str, Any]:
+    """Compara conteos live de 24 h con el promedio diario de replay del año 2025."""
     geo_sql, geo_params = _where_geografico(filtros.country_id)
     min_mag = max(4.0, filtros.min_mag) if filtros.min_mag is not None else 4.0
     inicio_live = ahora - timedelta(hours=24)
@@ -418,6 +441,7 @@ def obtener_estadisticas(
     country_id: str | None = None,
     mode: str = "live",
 ) -> dict[str, Any]:
+    """Agrega por país, hora, magnitud y profundidad usando filtros compartidos."""
     ahora = datetime.now(timezone.utc)
     filtros = _validar_filtros(
         start, end, min_mag, country_id, mode, ahora=ahora

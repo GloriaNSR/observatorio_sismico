@@ -7,7 +7,7 @@
 
   @if (filters().mode === 'replay') {
     <aside class="replay-banner" role="status">
-      MODO REPRODUCCIÓN (REPLAY)
+      MODO DE REPRODUCCIÓN HISTÓRICA
       <span>El intervalo inicial está ajustado a 2025 y puede modificarse.</span>
     </aside>
   }
@@ -19,7 +19,7 @@
         <h2 id="filters-title">Filtros</h2>
       </div>
       <span class="mode-badge" [class.demo-badge]="appMode() === 'demo'">
-        {{ appMode() === 'demo' ? 'DEMOSTRACIÓN · DATOS FICTICIOS' : 'API · BACKEND' }}
+        {{ appMode() === 'demo' ? 'DEMOSTRACIÓN · DATOS FICTICIOS' : 'API · SERVIDOR' }}
       </span>
     </div>
     <div class="filter-grid">
@@ -48,8 +48,8 @@
       <label>
         Modo de datos
         <select [ngModel]="filters().mode" (ngModelChange)="setMode($event)">
-          <option value="live">En vivo (live)</option>
-          <option value="replay">Reproducción (replay)</option>
+          <option value="live">En tiempo real</option>
+          <option value="replay">Reproducción histórica</option>
         </select>
       </label>
     </div>
@@ -82,7 +82,7 @@
       <div><dt>Última lectura correcta</dt><dd>{{ lastRead() }} <span>({{ readingAge() }})</span></dd></div>
       <div><dt>Generación de la API</dt><dd>{{ generated() }}</dd></div>
       <div><dt>Última ingesta correcta USGS</dt><dd>{{ lastIngestion() === null ? 'ND' : formatTimestamp(lastIngestion()) }}</dd></div>
-      <div><dt>Antigüedad de ingesta</dt><dd>{{ appMode() === 'demo' ? 'No disponible en demo' : ingestionAgeText() }}</dd></div>
+      <div><dt>Antigüedad de ingesta</dt><dd>{{ appMode() === 'demo' ? 'No disponible en la demostración' : ingestionAgeText() }}</dd></div>
       <div><dt>Periodo consultado</dt><dd>{{ period() }}</dd></div>
       <div><dt>Filtros de la última lectura válida</dt><dd>{{ appliedFilters() }}</dd></div>
     </dl>
@@ -149,7 +149,7 @@
                 <td>{{ formatTimestamp(event.properties.time) }}</td>
                 <td>{{ eventMagnitude(event) }}</td>
                 <td>{{ eventDepth(event) }}</td>
-                <td>{{ event.properties.place || 'Sin descripción' }}</td>
+                <td>{{ formatPlace(event.properties.place) }}</td>
                 <td>{{ eventCountry(event) }}</td>
               </tr>
             }
@@ -262,15 +262,15 @@
           <h3>Comparación histórica</h3>
           <p class="help-text">
             Magnitud ≥ {{ stats.historical_comparison.minimum_magnitude }} y filtro geográfico aplicable.
-            La comparación fija las últimas 24 h live frente al año 2025 replay; no hereda el periodo ni el modo general del panel.
+            La comparación fija las últimas 24 h de actividad en tiempo real frente al año 2025 reproducido; no hereda el periodo ni el modo general del panel.
           </p>
           <dl class="comparison-grid">
             <div>
-              <dt>Últimas 24 h (live)</dt>
+              <dt>Últimas 24 h (tiempo real)</dt>
               <dd>{{ stats.historical_comparison.live_last_24h.count }}</dd>
             </div>
             <div>
-              <dt>Media diaria de 2025 (replay)</dt>
+              <dt>Media diaria de 2025 (reproducción histórica)</dt>
               <dd>{{ stats.historical_comparison.replay_2025.daily_average | number:'1.0-2' }}</dd>
             </div>
             <div>

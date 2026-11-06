@@ -1,4 +1,9 @@
-"""Consulta el feed de USGS y publica revisiones nuevas en Kafka."""
+"""Ingesta eventos USGS en tiempo real y publica revisiones en Kafka.
+
+Cumple el requisito de detectar cambios mediante la pareja (id, updated),
+esperar el ACK de Kafka antes de guardar el checkpoint del productor y dejar
+que el consumidor confirme PostgreSQL antes de confirmar el offset Kafka.
+"""
 
 import asyncio
 import json
@@ -22,12 +27,14 @@ SOURCE = "usgs_live"
 
 
 def _fecha_utc(valor: datetime) -> str:
+    """Convierte una fecha consciente de zona horaria al formato ISO-8601 UTC."""
     return valor.astimezone(timezone.utc).isoformat(timespec="seconds").replace(
         "+00:00", "Z"
     )
 
 
 def _milisegundos_epoch(valor: datetime) -> int:
+    """Expresa el instante de ingesta como milisegundos Unix para su persistencia."""
     return int(valor.timestamp() * 1000)
 
 
@@ -39,7 +46,7 @@ def descargar_feed(
     max_intentos: int = 5,
     espera_inicial: float | None = None,
 ) -> dict[str, Any]:
-    """Obtiene el feed con reintentos limitados para fallos transitorios."""
+    """Descarga y valida el FeatureCollection; reintenta fallos HTTP/red transitorios."""
     espera = (
         float(os.getenv("USGS_RETRY_BACKOFF_SECONDS", "2"))
         if espera_inicial is None
@@ -102,6 +109,7 @@ def descargar_feed(
 
 
 def validar_feature(feature: Any) -> tuple[str, int]:
+    """Exige un identificador y `properties.updated` para controlar cada revisión."""
     if not isinstance(feature, dict):
         raise ValueError("El evento USGS no es un objeto")
     event_id = feature.get("id")
@@ -115,6 +123,7 @@ def validar_feature(feature: Any) -> tuple[str, int]:
 
 
 def leer_ultima_revision(conexion, event_id: str) -> int | None:
+    """Lee el último `updated_ms` publicado para decidir si el evento es nuevo."""
     with conexion.cursor() as cursor:
         cursor.execute(
             """
@@ -129,6 +138,7 @@ def leer_ultima_revision(conexion, event_id: str) -> int | None:
 
 
 def guardar_revision_publicada(conexion, event_id: str, updated_ms: int) -> None:
+    """Guarda el checkpoint solo después del ACK de Kafka y solo si avanzó la revisión."""
     with conexion.cursor() as cursor:
         cursor.execute(
             """
@@ -144,6 +154,7 @@ def guardar_revision_publicada(conexion, event_id: str, updated_ms: int) -> None
 
 
 def actualizar_ultima_ingesta(conexion, ingested_ms: int) -> None:
+    """Actualiza el instante de ingesta que consulta el endpoint de salud."""
     with conexion.cursor() as cursor:
         cursor.execute(
             """
@@ -164,6 +175,7 @@ async def procesar_eventos(
     conexion,
     instante_ingesta: datetime,
 ) -> int:
+    """Publica solo revisiones nuevas y espera ACK antes de avanzar el checkpoint."""
     publicadas = 0
     for feature in features:
         event_id, updated_ms = validar_feature(feature)
@@ -195,6 +207,7 @@ async def procesar_eventos(
 
 
 def conectar_postgres():
+    """Abre la conexión PostgreSQL usada por los checkpoints del productor."""
     return psycopg2.connect(
         host=os.getenv("POSTGRES_HOST", "postgres"),
         port=int(os.getenv("POSTGRES_PORT", "5432")),
@@ -206,6 +219,7 @@ def conectar_postgres():
 
 
 async def main() -> None:
+    """Ejecuta el ciclo periódico USGS, preservando el último checkpoint ante errores."""
     logging.basicConfig(
         level=os.getenv("LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",

@@ -102,26 +102,26 @@ Cada tarea usa el formato obligatorio `- [ ] Tnnn [P?] [USn?] descripción y rut
 
 ### Once pruebas de aceptación
 
-- [ ] T041 [US1] Añadir a `backend/tests/acceptance/test_acceptance.py` el caso «Recibir un evento nuevo»: verificar una fila actual y visibilidad del evento en API y en las comprobaciones del panel/análisis.
-- [ ] T042 [US3] Añadir a `backend/tests/acceptance/test_acceptance.py` el caso «Reenviar la misma versión»: comprobar que no aumenta el número de terremotos ni las filas distintas de `evento_version`.
-- [ ] T043 [US3] Añadir a `backend/tests/acceptance/test_acceptance.py` el caso «Recibir una versión posterior»: comprobar que cambian el registro actual y los agregados que dependen de sus campos revisados.
-- [ ] T044 [US3] Añadir a `backend/tests/acceptance/test_acceptance.py` el caso «Recibir después una versión antigua»: comprobar que el evento actual conserva la revisión con mayor `updated_ms`.
-- [ ] T045 [US1] Añadir a `backend/tests/acceptance/test_acceptance.py` el caso «Magnitud nula»: comprobar que se conserva como null, aparece como «ND» y no cumple `min_mag` ni altera medias.
-- [ ] T046 [US3] Añadir a `backend/tests/acceptance/test_acceptance.py` el caso «Coordenadas inválidas»: comprobar cuarentena con motivo y JSON original, y ausencia del punto en API/mapa.
-- [ ] T047 [US1] Añadir a `backend/tests/acceptance/test_acceptance.py` el caso «Evento marítimo»: comprobar `country_id = NULL`, etiqueta «Sin país asignado» y permanencia en los análisis.
-- [ ] T048 [US3] Añadir a `backend/tests/acceptance/test_acceptance.py` el caso «Reiniciar consumidor»: comprobar que reanuda desde el offset confirmado sin duplicar efectos persistidos.
-- [ ] T049 [US5] Documentar en `docs/evidencias/aceptacion.md` el procedimiento «Cerrar el túnel»: desconectar ngrok/API durante una sesión del panel y registrar el aviso, conservación de última lectura y antigüedad.
-- [ ] T050 [US5] Documentar en `docs/evidencias/aceptacion.md` el procedimiento «Volver a abrir el túnel»: restablecer el servicio y registrar la recuperación automática de consultas y datos sin intervención manual.
-- [ ] T051 [US5] Añadir a `backend/tests/acceptance/test_acceptance.py` el caso «Reproducción histórica»: comprobar publicación/consumo por Kafka en modo replay, orden acelerado, duplicado/revisión controlados y aislamiento completo de las consultas live.
-- [ ] T052 Ejecutar las once pruebas del apartado 11 de `ENUNCIADO.md`, registrar comando, resultado PASS/FAIL, fecha, evidencia y limitaciones en `docs/evidencias/aceptacion.md`, y corregir cualquier fallo antes de cerrar la fase.
+- [X] T041 [US1] Añadir a `backend/tests/acceptance/test_acceptance.py` el caso «Recibir un evento nuevo»: verificar una fila actual y visibilidad del evento en API y en las comprobaciones del panel/análisis.
+- [X] T042 [US3] Añadir a `backend/tests/acceptance/test_acceptance.py` el caso «Reenviar la misma versión»: comprobar que no aumenta el número de terremotos ni las filas distintas de `evento_version`.
+- [X] T043 [US3] Añadir a `backend/tests/acceptance/test_acceptance.py` el caso «Recibir una versión posterior»: comprobar que cambian el registro actual y los agregados que dependen de sus campos revisados.
+- [X] T044 [US3] Añadir a `backend/tests/acceptance/test_acceptance.py` el caso «Recibir después una versión antigua»: comprobar que el evento actual conserva la revisión con mayor `updated_ms`.
+- [X] T045 [US1] Añadir a `backend/tests/acceptance/test_acceptance.py` el caso «Magnitud nula»: comprobar que se conserva como null, aparece como «ND» y no cumple `min_mag` ni altera medias.
+- [X] T046 [US3] Añadir a `backend/tests/acceptance/test_acceptance.py` el caso «Coordenadas inválidas»: comprobar cuarentena con motivo y JSON original, y ausencia del punto en API/mapa.
+- [X] T047 [US1] Añadir a `backend/tests/acceptance/test_acceptance.py` el caso «Evento marítimo»: comprobar `country_id = NULL`, etiqueta «Sin país asignado» y permanencia en los análisis.
+- [X] T048 [US3] Añadir a `backend/tests/acceptance/test_acceptance.py` el caso «Reiniciar consumidor»: comprobar que reanuda desde el offset confirmado sin duplicar efectos persistidos.
+- [X] T049 [US5] Documentar en `docs/evidencias/aceptacion.md` el procedimiento «Cerrar el túnel»: desconectar ngrok/API durante una sesión del panel y registrar el aviso, conservación de última lectura y antigüedad.
+- [X] T050 [US5] Documentar en `docs/evidencias/aceptacion.md` el procedimiento «Volver a abrir el túnel»: restablecer el servicio y registrar la recuperación automática de consultas y datos sin intervención manual.
+- [X] T051 [US5] Añadir a `backend/tests/acceptance/test_acceptance.py` el caso «Reproducción histórica»: comprobar publicación/consumo por Kafka en modo replay, orden acelerado, duplicado/revisión controlados y aislamiento completo de las consultas live.
+- [X] T052 Ejecutar las once pruebas del apartado 11 de `ENUNCIADO.md`, registrar comando, resultado PASS/FAIL, fecha, evidencia y limitaciones en `docs/evidencias/aceptacion.md`, y corregir cualquier fallo antes de cerrar la fase.
 
 ### Rendimiento, calidad y entrega
 
-- [ ] T053 Medir en `docs/memoria.md` tiempo y memoria con al menos tres tamaños de entrada; identificar equipo, operación, método y resultados, comparar búsqueda secuencial con diccionario o consulta sin/con índice, etiquetar datos sintéticos y razonar el escenario de 100 millones de registros.
-- [ ] T054 Documentar en `docs/memoria.md` el análisis de calidad con código/consultas, fuente, periodo, grano/denominador, resultados antes/después, decisiones, limitaciones y acciones justificadas; no crear un generador de informes ni un panel de calidad.
-- [ ] T055 Completar `docs/memoria.md` con modelo conceptual/lógico/físico, procedencia, consultas de ingesta, tres conclusiones fundamentadas, comparación equivalente de 2025, costes, complejidad, escalado, limitaciones y mejoras propuestas.
-- [ ] T056 Completar `README.md` en la raíz con prerrequisitos, configuración desde `.env.example`, comando único `docker compose up --build -d`, carga del histórico, URL/configuración del frontend, túnel, CORS, validaciones y apagado seguro.
-- [ ] T057 Ejecutar el quickstart de `specs/001-observatorio-sismico/quickstart.md`, validar `docker compose config`, salud de los cinco servicios, pruebas backend y `npm run build` en `frontend/`; registrar los resultados finales en `docs/evidencias/aceptacion.md`.
+- [X] T053 Medir en `docs/memoria.md` tiempo y memoria con al menos tres tamaños de entrada; identificar equipo, operación, método y resultados, comparar búsqueda secuencial con diccionario o consulta sin/con índice, etiquetar datos sintéticos y razonar el escenario de 100 millones de registros.
+- [X] T054 Documentar en `docs/memoria.md` el análisis de calidad con código/consultas, fuente, periodo, grano/denominador, resultados antes/después, decisiones, limitaciones y acciones justificadas; no crear un generador de informes ni un panel de calidad.
+- [X] T055 Completar `docs/memoria.md` con modelo conceptual/lógico/físico, procedencia, consultas de ingesta, tres conclusiones fundamentadas, comparación equivalente de 2025, costes, complejidad, escalado, limitaciones y mejoras propuestas.
+- [X] T056 Completar `README.md` en la raíz con prerrequisitos, configuración desde `.env.example`, comando único `docker compose up --build -d`, carga del histórico, URL/configuración del frontend, túnel, CORS, validaciones y apagado seguro.
+- [X] T057 Ejecutar el quickstart de `specs/001-observatorio-sismico/quickstart.md`, validar `docker compose config`, salud de los cinco servicios, pruebas backend y `npm run build` en `frontend/`; registrar los resultados finales en `docs/evidencias/aceptacion.md`.
 
 **Criterio de salida**: Las once pruebas del enunciado tienen evidencia; las mediciones cubren tres tamaños; la memoria y el README permiten reproducir y explicar el proyecto.
 
