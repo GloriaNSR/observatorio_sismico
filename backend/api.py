@@ -26,6 +26,7 @@ MAX_LIMIT = 5000
 DEFAULT_LIMIT = 1000
 HISTORY_START = datetime(2025, 1, 1, tzinfo=timezone.utc)
 HISTORY_END = datetime(2026, 1, 1, tzinfo=timezone.utc)
+NETLIFY_ORIGIN_REGEX = r"https://[a-z0-9][a-z0-9-]*\.netlify\.app"
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,7 @@ app = FastAPI(title="Observatorio Sísmico API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origenes_cors(),
+    allow_origin_regex=NETLIFY_ORIGIN_REGEX,
     allow_credentials=False,
     allow_methods=["GET", "OPTIONS"],
     allow_headers=["ngrok-skip-browser-warning"],

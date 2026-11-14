@@ -52,7 +52,7 @@ Las estadísticas contienen `metadata`, `events_by_country` (incluye «Sin país
 
 ## Acceso desde Netlify
 
-Configura CORS en FastAPI para el origen exacto de la web y `http://localhost:4200` durante desarrollo; métodos GET y OPTIONS, y cabecera `ngrok-skip-browser-warning`. Si utilizas `CORSMiddleware`, este middleware atiende el preflight. No necesitas cookies para una API pública de consulta de estos datos.
+Configura CORS en FastAPI para `http://localhost:4200`, los subdominios HTTPS de `netlify.app` y los orígenes exactos adicionales configurados. Permite los métodos GET y OPTIONS y la cabecera `ngrok-skip-browser-warning`, sin credenciales. Si utilizas `CORSMiddleware`, este middleware atiende el preflight. No necesitas cookies para una API pública de consulta de estos datos.
 
 El encabezado de ngrok evita su página intermedia cuando es aplicable; no autentica al usuario. No incluir secretos en config.json. Añade timeout y manejo de errores en el frontend.
 

@@ -409,13 +409,12 @@ Edita `frontend/public/config.json`:
 ```json
 {
   "mode": "api",
-  "apiUrl": "https://TU-DOMINIO-NGROK",
-  "refreshMs": 60000,
-  "skipNgrokWarning": true
+  "apiBaseUrl": "https://vertebrae-giggling-hardwired.ngrok-free.dev",
+  "refreshMs": 60000
 }
 ```
 
-Sustituye el dominio por el real. No añadas `/api` al final: el componente ya añade `/api/eventos`. Recarga la página; si está publicada, recompila y despliega la configuración actualizada.
+Esta es la URL pública actual. No añadas `/api` al final: el componente ya añade `/api/eventos`. Si ngrok asigna otra URL, actualiza este valor y recarga la página; si está publicada, recompila y despliega la configuración actualizada.
 
 En modo `demo`, el mapa carga un archivo fijo: no se conecta al backend ni demuestra streaming.
 
@@ -466,7 +465,7 @@ El navegador ve dos orígenes diferentes: la web de Netlify y la API de ngrok. E
 
 Que una URL funcione al abrirla directamente no demuestra que el navegador permita leerla desde otra página.
 
-Autoriza el dominio exacto de Netlify, el origen de desarrollo cuando corresponda y la cabecera `ngrok-skip-browser-warning`. La petición `OPTIONS` previa puede ser normal. El middleware CORS debe responderla correctamente.
+Autoriza `http://localhost:4200`, los subdominios HTTPS de `netlify.app` y la cabecera `ngrok-skip-browser-warning`. La petición `OPTIONS` previa puede ser normal. El middleware CORS debe responderla correctamente; no se habilitan credenciales.
 
 Si Angular recibe HTML en lugar de JSON, comprueba la URL y si aparece una página de aviso de ngrok. No utilices `mode: "no-cors"`: no permite a Angular leer una respuesta JSON opaca.
 

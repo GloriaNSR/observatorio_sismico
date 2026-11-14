@@ -91,4 +91,4 @@ Cada registro Kafka usa el `id` de USGS como clave. El valor contiene:
 
 ## CORS y despliegue
 
-Permitir únicamente el origen Netlify exacto configurado y `http://localhost:4200`, los métodos GET/OPTIONS y la cabecera `ngrok-skip-browser-warning`. Compose publica la API como `127.0.0.1:8000:8000`; solo la API se expone al equipo anfitrión. Dentro del contenedor, la API escucha en `0.0.0.0:8000`.
+Permitir `http://localhost:4200`, los subdominios HTTPS de `netlify.app` y los orígenes exactos adicionales configurados. Aceptar únicamente los métodos GET/OPTIONS y la cabecera `ngrok-skip-browser-warning`, sin credenciales. Compose publica la API como `127.0.0.1:8000:8000`; solo la API se expone al equipo anfitrión. Dentro del contenedor, la API escucha en `0.0.0.0:8000`.

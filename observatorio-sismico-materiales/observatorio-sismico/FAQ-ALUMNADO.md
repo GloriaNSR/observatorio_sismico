@@ -409,13 +409,12 @@ Edita `frontend/public/config.json`:
 ```json
 {
   "mode": "api",
-  "apiUrl": "https://TU-DOMINIO-NGROK",
-  "refreshMs": 60000,
-  "skipNgrokWarning": true
+  "apiBaseUrl": "https://vertebrae-giggling-hardwired.ngrok-free.dev",
+  "refreshMs": 60000
 }
 ```
 
-Sustituye el dominio por el real. No añadas `/api` al final: el componente ya añade `/api/eventos`. Recarga la página; si está publicada, recompila y despliega la configuración actualizada.
+Esta es la URL pública actual. No añadas `/api` al final: el componente ya añade `/api/eventos`. Si ngrok asigna otra URL, actualiza este valor y recompila y despliega la configuración actualizada.
 
 En modo `demo`, el mapa carga un archivo fijo: no se conecta al backend ni demuestra streaming.
 

@@ -37,7 +37,7 @@ Implementar el observatorio mediante cinco servicios de Docker Compose: un produ
 - **Tecnologías — APROBADAS**: Python 3.11+, FastAPI, aiokafka, psycopg2-binary, requests, GeoPandas/Shapely, PostgreSQL, Kafka KRaft y Angular/Leaflet proporcionados cumplen la constitución.
 - **Ingesta y replay — APROBADOS**: El productor persiste el estado de publicación confirmada; el cargador histórico consulta 2025 en intervalos acotados y publica datos etiquetados como replay; las consultas del consumidor seleccionan siempre el modo solicitado.
 - **Calidad y persistencia — APROBADAS**: SQL admite cuarentena, unicidad de versiones inmutables, upserts del evento actual, conservación de nulos y asignación espacial del país mediante `ADM0_A3`. Los offsets Kafka se confirman después de la transacción de base de datos.
-- **Frontend/API — APROBADOS**: Eventos, estadísticas y salud usan los endpoints documentados y filtros equivalentes; CORS permite el origen Netlify configurado, el origen local de desarrollo, OPTIONS y la cabecera de advertencia de ngrok.
+- **Frontend/API — APROBADOS**: Eventos, estadísticas y salud usan los endpoints documentados y filtros equivalentes; CORS permite el origen local, subdominios HTTPS de `netlify.app`, orígenes exactos adicionales, OPTIONS y la cabecera de advertencia de ngrok, sin credenciales.
 
 No hay incumplimientos de la constitución ni decisiones de diseño pendientes que bloqueen la Fase 0. Tras la Fase 1, el diseño sigue superando estas comprobaciones; véanse `research.md` y los contratos de esquema/API.
 

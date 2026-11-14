@@ -268,6 +268,24 @@ def test_cors_preflight_localhost_y_header_ngrok(cliente) -> None:
     assert "ngrok-skip-browser-warning" in response.headers["access-control-allow-headers"]
 
 
+def test_cors_preflight_admite_subdominio_de_netlify(cliente) -> None:
+    test_client, _ = cliente
+
+    response = test_client.options(
+        "/api/eventos",
+        headers={
+            "Origin": "https://observatorio-preview.netlify.app",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "ngrok-skip-browser-warning",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://observatorio-preview.netlify.app"
+    assert "GET" in response.headers["access-control-allow-methods"]
+    assert "ngrok-skip-browser-warning" in response.headers["access-control-allow-headers"]
+
+
 def test_origen_netlify_es_configurable(monkeypatch) -> None:
     monkeypatch.setenv("NETLIFY_ORIGIN", "https://observatorio-ejemplo.netlify.app")
     monkeypatch.setenv("CORS_ORIGINS", "http://localhost:4200")

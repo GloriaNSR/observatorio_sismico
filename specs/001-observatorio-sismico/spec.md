@@ -133,7 +133,7 @@ Como responsable del observatorio, quiero conocer la frescura de los datos y pod
 - **FR-020**: El panel MUST mostrar recuentos geográficos y horarios, distribuciones de magnitud y profundidad, comparación histórica de 2025 y una tabla consultable con «ND» para valores nulos.
 - **FR-021**: El panel MUST mostrar cuándo se realizó la última lectura, la última ingesta de USGS y avisos comprensibles cuando haya errores o datos antiguos. Ante un fallo conservará la última lectura y su antigüedad, y reintentará la actualización automáticamente.
 - **FR-022**: El panel MUST reflejar claramente resultados truncados y errores, y no calcular ni presentar estadísticas globales como completas cuando los eventos disponibles sean solo una muestra.
-- **FR-023**: La API MUST permitir solicitudes desde `http://localhost:4200` y el origen exacto del sitio publicado en Netlify, aceptar los métodos GET y OPTIONS y permitir la cabecera `ngrok-skip-browser-warning`.
+- **FR-023**: La API MUST permitir solicitudes desde `http://localhost:4200`, subdominios HTTPS de `netlify.app` y orígenes exactos adicionales configurados; aceptar los métodos GET y OPTIONS y permitir la cabecera `ngrok-skip-browser-warning` sin credenciales.
 
 ### Key Entities *(include if data involved)*
 

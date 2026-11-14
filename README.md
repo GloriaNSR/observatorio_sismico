@@ -166,14 +166,13 @@ La API solo acepta conexiones locales. Instala y configura ngrok siguiendo las i
 ngrok http 8000
 ```
 
-Usa la URL HTTPS que ngrok entrega. En `frontend/public/config.json`, cambia `apiUrl` por esa URL **sin** añadir `/api`, por ejemplo:
+La URL pública de API de este despliegue es `https://vertebrae-giggling-hardwired.ngrok-free.dev`. En `frontend/public/config.json`, configura `apiBaseUrl` con esa URL **sin** añadir `/api`:
 
 ```json
 {
   "mode": "api",
-  "apiUrl": "https://<subdominio>.ngrok-free.app",
-  "refreshMs": 60000,
-  "skipNgrokWarning": true
+  "apiBaseUrl": "https://vertebrae-giggling-hardwired.ngrok-free.dev",
+  "refreshMs": 60000
 }
 ```
 
@@ -183,7 +182,7 @@ Añade el origen exacto del panel a `CORS_ORIGINS` en `.env` (separado por comas
 docker compose up -d --force-recreate api
 ```
 
-Cuando esta opción está habilitada, la aplicación envía la cabecera `ngrok-skip-browser-warning`; CORS debe permitir GET/OPTIONS y esa cabecera. La API y el túnel deben seguir activos mientras se usa el panel. Si se interrumpe la conexión, la interfaz conserva la última lectura válida, muestra el error y cuánto tiempo ha pasado desde esa lectura, y vuelve a consultar automáticamente.
+El frontend envía siempre la cabecera `ngrok-skip-browser-warning` en sus peticiones a la API; CORS permite GET/OPTIONS y esa cabecera. El middleware admite `http://localhost:4200`, los subdominios HTTPS de `netlify.app` y los orígenes exactos adicionales indicados en `CORS_ORIGINS` o `NETLIFY_ORIGIN`; no usa credenciales. La API y el túnel deben seguir activos mientras se usa el panel. Si se interrumpe la conexión, la interfaz conserva la última lectura válida, muestra el error y cuánto tiempo ha pasado desde esa lectura, y vuelve a consultar automáticamente.
 
 ## 5. Desplegar el frontend en Netlify
 
@@ -191,7 +190,7 @@ Cuando esta opción está habilitada, la aplicación envía la cabecera `ngrok-s
 2. Conecta el repositorio a Netlify. Configura el campo **Base directory** (directorio base) como `frontend`.
 3. Usa `npm run build` como comando de compilación y `dist/observatorio/browser` como directorio que se publicará. [frontend/netlify.toml](./frontend/netlify.toml) ya contiene esos valores y `frontend/public/_redirects` permite recargar las rutas de la aplicación de una sola página (SPA).
 4. Configura `frontend/public/config.json` con la URL HTTPS pública de ngrok (sin `/api`) y vuelve a publicar para que el archivo se incluya en la compilación.
-5. En `.env`, define `NETLIFY_ORIGIN` con el origen exacto del sitio (sin ruta), y añade ese origen a `CORS_ORIGINS` junto con `http://localhost:4200`.
+5. Si se usa un dominio personalizado, en `.env` define `NETLIFY_ORIGIN` con el origen exacto (sin ruta) y añádelo a `CORS_ORIGINS` junto con `http://localhost:4200`. Los sitios bajo `*.netlify.app` ya están permitidos por el patrón HTTPS del middleware.
 6. Aplica la configuración del servidor con `docker compose up -d --force-recreate api` y comprueba el panel y las tres rutas desde el sitio publicado.
 
 No guardes claves ni authtokens en `config.json`: se distribuye públicamente con la aplicación.

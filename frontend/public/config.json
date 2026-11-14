@@ -1,6 +1,5 @@
 {
   "mode": "api",
-  "apiUrl": "http://localhost:8000",
-  "refreshMs": 60000,
-  "skipNgrokWarning": true
+  "apiBaseUrl": "https://vertebrae-giggling-hardwired.ngrok-free.dev",
+  "refreshMs": 60000
 }

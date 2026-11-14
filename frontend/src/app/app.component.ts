@@ -7,6 +7,8 @@ import type { Feature, FeatureCollection, Point } from 'geojson';
 
 type FeedMode = 'live' | 'replay';
 type AppMode = 'demo' | 'api';
+type MagnitudeBand = 'nd' | 'low' | 'moderate' | 'strong' | 'major';
+type ComparisonDirection = 'above' | 'below' | 'even' | 'unknown';
 type EventProperties = {
   mag: number | null;
   place: string | null;
@@ -53,9 +55,8 @@ type EventMetadata = {
 type Events = FeatureCollection<Point, EventProperties> & { metadata?: EventMetadata };
 type Config = {
   mode: AppMode;
-  apiUrl: string;
+  apiBaseUrl: string;
   refreshMs: number;
-  skipNgrokWarning: boolean;
 };
 type Filters = {
   start: string;
@@ -202,6 +203,11 @@ export class AppComponent implements OnDestroy {
     return ((comparison.live_last_24h.count - comparison.replay_2025.daily_average)
       / comparison.replay_2025.daily_average) * 100;
   });
+  readonly historicalVariationDirection = computed<ComparisonDirection>(() => {
+    const variation = this.historicalVariation();
+    return variation === null ? 'unknown' : variation > 0 ? 'above' : variation < 0 ? 'below' : 'even';
+  });
+  readonly historicalVariationWidth = computed(() => Math.min(100, Math.abs(this.historicalVariation() ?? 0)));
   readonly options: L.MapOptions = {
     center: L.latLng(18, 0),
     zoom: 2,
@@ -236,7 +242,7 @@ export class AppComponent implements OnDestroy {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
     }).addTo(map);
     const borders = L.geoJSON(undefined, {
-      style: { color: '#334155', weight: 1, fill: false },
+      style: { color: '#475569', weight: 0.9, opacity: 0.8, fill: false },
       onEachFeature: (feature, layer) => {
         const name = document.createElement('span');
         name.textContent = feature.properties?.NAME_ES ?? feature.properties?.ADMIN ?? 'Sin nombre';
@@ -367,6 +373,15 @@ export class AppComponent implements OnDestroy {
     return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(1) : 'ND';
   }
 
+  magnitudeBand(event: Earthquake): MagnitudeBand {
+    const value = event.properties?.mag;
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 'nd';
+    if (value < 2) return 'low';
+    if (value < 4) return 'moderate';
+    if (value < 6) return 'strong';
+    return 'major';
+  }
+
   eventDepth(event: Earthquake): string {
     const value = event.properties?.depth_km ?? event.properties?.depth;
     return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(1)} km` : 'ND';
@@ -494,18 +509,18 @@ export class AppComponent implements OnDestroy {
         return;
       }
 
-      const base = config.apiUrl.replace(/\/+$/, '');
+      const base = config.apiBaseUrl.replace(/\/+$/, '');
       // Reutiliza exactamente los mismos parámetros para que eventos y estadísticas representen el mismo corte.
       const [page, statistics, health] = await Promise.all([
         this.fetchEvents(config, query, controller.signal),
         this.readJson<ApiStatistics>(
           `${base}/api/estadisticas?${query.toString()}`,
-          this.apiHeaders(config),
+          this.apiHeaders(),
           controller.signal
         ),
         this.readJson<ApiHealth>(
           `${base}/api/salud`,
-          this.apiHeaders(config),
+          this.apiHeaders(),
           controller.signal
         )
       ]);
@@ -567,8 +582,8 @@ export class AppComponent implements OnDestroy {
     signal: AbortSignal
   ): Promise<Events> {
     // El mismo URLSearchParams se comparte con /api/estadisticas desde refresh().
-    const url = `${config.apiUrl.replace(/\/+$/, '')}/api/eventos?${query.toString()}`;
-    const data = await this.readJson<Events>(url, this.apiHeaders(config), signal);
+    const url = `${config.apiBaseUrl.replace(/\/+$/, '')}/api/eventos?${query.toString()}`;
+    const data = await this.readJson<Events>(url, this.apiHeaders(), signal);
     this.validateEvents(data);
     return data;
   }
@@ -631,22 +646,19 @@ export class AppComponent implements OnDestroy {
     return payload as T;
   }
 
-  private apiHeaders(config: Config): Record<string, string> {
-    return config.skipNgrokWarning ? { 'ngrok-skip-browser-warning': 'true' } : {};
+  private apiHeaders(): Record<string, string> {
+    return { 'ngrok-skip-browser-warning': 'true' };
   }
 
   private validateConfig(config: Config): void {
     if (!config || !['api', 'demo'].includes(config.mode)) {
       throw new Error('mode debe ser "api" o "demo".');
     }
-    if (typeof config.apiUrl !== 'string' || !config.apiUrl.trim()) {
-      throw new Error('apiUrl debe indicar la URL del servidor.');
+    if (typeof config.apiBaseUrl !== 'string' || !config.apiBaseUrl.trim()) {
+      throw new Error('apiBaseUrl debe indicar la URL del servidor.');
     }
     if (!Number.isFinite(config.refreshMs) || config.refreshMs <= 0) {
       throw new Error('refreshMs debe ser un número positivo.');
-    }
-    if (typeof config.skipNgrokWarning !== 'boolean') {
-      throw new Error('skipNgrokWarning debe ser booleano.');
     }
   }
 
@@ -697,15 +709,31 @@ export class AppComponent implements OnDestroy {
       const color = depth === null
         ? '#64748b'
         : depth < 70 ? '#d99b00' : depth < 300 ? '#e35b37' : '#7b3fb6';
-      const popup = document.createElement('div');
-      popup.textContent = [
-        this.formatPlace(properties.place),
-        `Magnitud: ${magnitude === null ? 'ND' : magnitude}`,
-        `Profundidad: ${depth === null ? 'ND' : `${depth} km`}`,
-        `Fecha UTC: ${this.formatTimestamp(properties.time)}`,
-        `País: ${properties.country_name ?? 'Sin país asignado'}`,
-        `ID: ${feature.id ?? 'ND'}`
-      ].join('\n');
+      const popup = document.createElement('article');
+      popup.className = 'quake-popup';
+      const heading = document.createElement('strong');
+      heading.className = 'quake-popup-title';
+      heading.textContent = this.formatPlace(properties.place);
+      popup.append(heading);
+      const details = document.createElement('dl');
+      const rows: [string, string][] = [
+        ['Magnitud', magnitude === null ? 'ND' : magnitude.toFixed(1)],
+        ['Profundidad', depth === null ? 'ND' : `${depth.toFixed(1)} km`],
+        ['Hora UTC', this.formatTimestamp(properties.time)],
+        ['País', properties.country_name ?? 'Sin país asignado'],
+        ['Coordenadas', `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`],
+        ['ID', String(feature.id ?? 'ND')]
+      ];
+      for (const [label, value] of rows) {
+        const row = document.createElement('div');
+        const term = document.createElement('dt');
+        const description = document.createElement('dd');
+        term.textContent = label;
+        description.textContent = value;
+        row.append(term, description);
+        details.append(row);
+      }
+      popup.append(details);
       L.circleMarker([latitude, longitude], {
         radius: magnitude === null ? 4 : Math.max(3, Math.min(18, 3 + (magnitude + 1) * 2)),
         color,

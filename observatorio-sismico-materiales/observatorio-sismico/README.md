@@ -66,13 +66,12 @@ Cambia `frontend/public/config.json`:
 ```json
 {
   "mode": "api",
-  "apiUrl": "https://TU-DOMINIO-ASIGNADO",
-  "refreshMs": 60000,
-  "skipNgrokWarning": true
+  "apiBaseUrl": "https://vertebrae-giggling-hardwired.ngrok-free.dev",
+  "refreshMs": 60000
 }
 ```
 
-`apiUrl` no termina en `/api`: el componente añade `/api/eventos`. Usa el dominio asignado realmente a tu cuenta. Recarga la página después de cambiar la configuración. Configura CORS en el backend. Una llamada OPTIONS puede preceder al GET por la cabecera de ngrok; no la bloquees.
+`apiBaseUrl` es la URL pública actual de ngrok y no termina en `/api`: el componente añade `/api/eventos`. El frontend envía siempre `ngrok-skip-browser-warning`; CORS debe permitir esa cabecera y las peticiones OPTIONS. Si ngrok asigna otra URL, actualiza este valor y recompila y despliega la configuración.
 
 La consulta se programa después de terminar la anterior, evitando peticiones solapadas. El timeout es de 15 segundos. Si falla, se conserva la capa anterior y se muestra un aviso. Al destruir el componente se cancela la petición y el temporizador. La interfaz inicial muestra cuándo se leyó y generó la respuesta; añade la última ingesta real de USGS para detectar un productor parado.
 

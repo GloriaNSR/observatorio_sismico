@@ -1,6 +1,6 @@
 # Memoria del observatorio sísmico
 
-**Corte de evidencias:** 6 de noviembre de 2026.
+**Corte de evidencias:** 14 de noviembre de 2026 (instantánea PostgreSQL a las 09:56:54 UTC).
 **Fuente principal:** catálogo de eventos USGS FDSN y canal GeoJSON en tiempo real.
 
 ## 1. Arquitectura desplegada
@@ -39,6 +39,8 @@ El consumidor valida un mensaje, determina el país y abre una transacción Post
 
 La prueba real de reinicio dejó el desplazamiento del grupo `observatorio-consumidor` en `19363` antes y después, sin mensajes pendientes (`lag=0`). La cantidad de eventos reproducidos de 2025 y sus versiones permaneció en `18.302` durante el reinicio.
 
+La instantánea SQL de solo lectura del 14-11-2026 registró **1.770 eventos live únicos**, **2.542 versiones** y **772 versiones adicionales** respecto del primer registro por evento. La restricción `(event_id, updated_ms, mode)` no tenía colisiones: las 2.542 filas correspondían a 2.542 claves distintas. Las 1.770 proyecciones actuales coincidían con el `MAX(updated_ms)` de su historial. Por ejemplo, `ci41361583` pasó de `updated_ms=1794536080876, mag=2.39` a `1794606734892, mag=2.53`; `evento_actual` conservó el segundo valor. Esta comprobación de unicidad y de correspondencia entre historial y estado vigente es evidencia de idempotencia del UPSERT, no una prueba de entrega exactamente una vez. El detalle de consultas y resultados está en [evidencias_24h.md](./evidencias_24h.md).
+
 ## 3. Procedencia y carga histórica
 
 El archivo `datos/historico/2025/manifest.json` registra la fuente `https://earthquake.usgs.gov/fdsnws/event/1/query`, 12 consultas mensuales, `format=geojson`, `eventtype=earthquake`, `minmagnitude=4` y orden `time-asc`. La extracción registrada en el manifiesto se realizó el 31-10-2026; las consultas se ejecutaron entre `13:24:25Z` y `13:24:33Z`. Se obtuvieron 18.302 entidades GeoJSON, todas quedaron tras la deduplicación y no se registraron duplicados en los límites de los intervalos. La consulta mensual evita exceder el límite de resultados; el cargador subdivide los intervalos que lo alcanzan.
@@ -51,7 +53,7 @@ https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&starttime=2025-0
 
 El archivo anual local contiene 18.302 entidades GeoJSON y ocupa 12.989.310 bytes. En PostgreSQL hay 18.302 eventos de reproducción histórica dentro del intervalo `[2025-01-01, 2026-01-01)`. Los archivos de datos almacenados localmente están excluidos de Git; en una copia del repositorio que no los tenga, el cargador vuelve a descargarlos.
 
-La comparación de la API usa el mismo umbral `min_mag=4` y no aplica filtro geográfico. En la respuesta observada, las últimas 24 horas en tiempo real tenían 13 eventos; la reproducción de 2025 tenía 18.302 eventos en 365 días, con un promedio de 50,142 al día (incluidos los días sin eventos). Son periodos y niveles de agregación distintos —un día frente al promedio diario anual— y no deben interpretarse como tasas idénticas.
+La comparación de la API usa el mismo umbral `min_mag=4` y no aplica filtro geográfico. En la respuesta observada el 6-11-2026, las últimas 24 horas en tiempo real tenían 13 eventos; la reproducción de 2025 tenía 18.302 eventos en 365 días, con un promedio de 50,142 al día (incluidos los días sin eventos). Son periodos y niveles de agregación distintos —un día frente al promedio diario anual— y no deben interpretarse como tasas idénticas.
 
 Reproducción desde la copia archivada:
 
@@ -91,14 +93,11 @@ WHERE mode = 'replay'
 
 Resultado observado: `18.302` eventos; `0` magnitudes nulas; `0` profundidades nulas; `14.350` sin país y `3.952` asignados. El porcentaje sin país es `78,4 %` del conjunto (denominador: eventos replay del año, no todos los mensajes del canal). Son eventos válidos, no cuarentena; se mantienen en el total, tabla y estadísticas. La fuente histórica ya filtra magnitud mínima 4, por lo que la ausencia de nulos no se extrapola a otras fuentes de datos o umbrales.
 
-La consulta de mensajes recibidos en tiempo real en `cuarentena`, del 6-11-2026, mostró 9 filas: 8 con `properties.type = quarry blast` (explosión de cantera) y 1 con `explosion` (explosión). Todas se rechazaron porque `properties.type` debía ser `"earthquake"` (terremoto). Ejemplos reales de la base:
+La instantánea live de `cuarentena` del 14-11-2026 mostró **110 rechazos**, todos con el motivo `properties.type debe ser "earthquake"`. El desglose completo por `properties.type` fue: 75 `other event`, 20 `quarry blast`, 12 `explosion`, 2 `landslide` y 1 `ice quake`. Son tipos no sísmicos según la regla del consumidor; el JSON original y el motivo se conservan. Por ejemplo, la captura incluyó eventos `quarry blast` además de los registros recientes `other event` de Alaska. La tabla de ejemplos, identificadores y coordenadas se presenta en [evidencias_24h.md](./evidencias_24h.md).
 
-| `event_id` | Tipo recibido | Motivo guardado | Coordenadas originales |
-|---|---|---|---|
-| `ok2026vshf` | `quarry blast` (explosión de cantera) | `properties.type debe ser "earthquake"` (se esperaba un terremoto) | `[-96.82033333, 34.38883333, 0]` |
-| `uw714132811` | `explosion` (explosión) | `properties.type debe ser "earthquake"` (se esperaba un terremoto) | `[-121.934333333333, 48.0923333333333, -0.31]` |
+El conteo es una instantánea acumulada de la tabla y puede crecer al continuar la ingesta. Las pruebas de aceptación también enviaron coordenadas inválidas y verificaron el motivo, el mensaje original y la ausencia de esos identificadores en la respuesta de la API. Los eventos marítimos se conservaron con el país nulo; `/api/estadisticas` los agrupa como «Sin país asignado» y el panel muestra esa etiqueta en lugar de descartarlos.
 
-El conteo es una instantánea del flujo en tiempo real y puede crecer al continuar la ingesta. Las pruebas de aceptación también enviaron coordenadas inválidas y verificaron el motivo, el mensaje original y la ausencia de esos identificadores en la respuesta de la API. Los eventos marítimos se conservaron con el país nulo; `/api/estadisticas` los agrupa como «Sin país asignado» y el panel muestra esa etiqueta en lugar de descartarlos.
+La cobertura de ocurrencia live va de `2026-10-30 13:11:46.470 UTC` a `2026-11-14 09:26:13.073 UTC` (**356,24 horas**, con actividad en 195 horas UTC distintas). Las versiones live tienen `ingested_at` desde `2026-10-31 13:11:16 UTC` hasta `2026-11-14 09:50:38 UTC` (**332,66 horas**). Estos rangos prueban persistencia acumulada durante bastante más de 24 horas, pero no prueban continuidad del proceso: el mayor intervalo entre filas versionadas fue **4 días, 13 horas y 52 minutos**, con tres intervalos superiores a 24 horas. Esos huecos pueden representar ausencia de revisiones recibidas o interrupciones; el esquema no guarda un registro histórico de cada sondeo exitoso. Por tanto, no se afirma una captura ininterrumpida a partir de estos datos. En el momento de consultar, `estado_productor` contenía **1.828 checkpoints live**.
 
 Para presentar ubicaciones, el panel traduce al español las expresiones regulares de distancia y orientación de USGS (por ejemplo, `11 km ENE of Coso Junction, CA` se muestra como «11 km al este-noreste de Coso Junction, CA»). También traduce expresiones conocidas como `Izu Islands, Japan region` a «Islas Izu, región de Japón». Se conservan los topónimos y el texto original en la base/API para no alterar la procedencia.
 
@@ -109,6 +108,10 @@ La API no publica un promedio de magnitud: informa por separado los valores nulo
 ### Método y entorno
 
 Se procesaron las primeras 100, 1.000 y 10.000 entidades del GeoJSON histórico real, ejecutando la misma función `validar_evento` que utiliza el consumidor. Se midió el tiempo de ejecución para la validación y el cruce espacial. El caso indexado usa `GeoDataFrame.sindex`/STRtree de GeoPandas; como referencia, se sustituyó la consulta por una búsqueda lineal `contains` en los 177 polígonos. La lectura del archivo, las bibliotecas y la creación del índice se realizaron antes de iniciar el cronómetro. Cada medición se ejecutó en un proceso nuevo.
+
+Las mediciones de 100/1.000/10.000 entradas de la tabla siguiente ya estaban registradas con entidades reales del archivo histórico; no se repitieron durante la consulta de evidencia live para no confundir una prueba de rendimiento con la captura persistida. Las consultas y los resultados de esta instantánea PostgreSQL están en [evidencias_24h.md](./evidencias_24h.md).
+
+Como contexto de volumen —no como benchmark de throughput—, la instantánea live acumulaba 1.770 filas en `evento_actual`, 2.542 en `evento_version` (772 versiones adicionales), 110 rechazos en `cuarentena` y 1.828 checkpoints en `estado_productor`. La recepción de versiones cubre 332,66 horas y contiene intervalos sin nuevas versiones de hasta 4 d 13 h 52 min; no se usa ese rango para inferir eventos por hora ni continuidad del sondeo.
 
 Equipo: Windows 11 Home, AMD Ryzen 7 5800X y 32 GiB de RAM; Docker Desktop reportó 16 CPU y 15,57 GiB para su máquina virtual. El contenedor no tenía un límite de memoria configurado. Entorno de medición: Python 3.11.18, GeoPandas 1.2.0 y Shapely 2.2.0.
 
@@ -159,13 +162,15 @@ En la validación final, `docker compose config --quiet` terminó correctamente;
 
 Validación transversal: los tres endpoints devolvieron HTTP 200, el catálogo contiene 177 países, pasaron 37 pruebas del servidor y 2 de infraestructura, y Angular compiló correctamente.
 
+Como evidencia complementaria del 14-11-2026, la base consultada directamente tenía 1.770 eventos live, 2.542 versiones, cero colisiones de clave de versión, 110 filas en cuarentena y 1.828 checkpoints live. En esta ejecución solo estaba levantado PostgreSQL; no se reiniciaron Kafka, productor, consumidor ni API y no se repitieron las pruebas HTTP. Los resultados detallados y la limitación sobre continuidad están en [evidencias_24h.md](./evidencias_24h.md).
+
 El detalle de cada uno de los once escenarios, comandos y límites de la prueba de túnel está en [evidencias/aceptacion.md](./evidencias/aceptacion.md).
 
 ## 7. Conclusiones técnicas
 
-1. **El índice espacial reduce el coste de las consultas reales.** En 10.000 entidades de 2025 redujo el tiempo de 4,969 s a 2,428 s (2,05×) y evita la búsqueda lineal, que requeriría 1,77 millones de comprobaciones entre puntos y polígonos. Para 100 millones, el índice debe seguir formando parte del consumidor; aun así, la medición en serie proyecta varias horas de CPU y justifica el procesamiento en paralelo y las inserciones por lotes.
-2. **La transacción previa a la confirmación del desplazamiento de Kafka resiste reenvíos y reinicios.** Tras reiniciar el consumidor, el desplazamiento permaneció en 19363 y no hubo mensajes pendientes; los registros y versiones de la reproducción de 2025 permanecieron en 18.302. Las restricciones únicas evitan duplicar efectos si el mensaje se vuelve a entregar entre ambas confirmaciones.
-3. **La asignación geográfica no debe utilizarse como criterio de validez.** 14.350 de 18.302 eventos de 2025 (78,4 %) no tienen país asignado, pero siguen siendo válidos y analizables; el sistema los conserva y los muestra como «Sin país asignado». En los datos recibidos en tiempo real, los casos de explosión de cantera (`quarry blast`) y explosión (`explosion`) se envían a cuarentena según su tipo, conservando el mensaje original y la causa.
+1. **El índice espacial reduce el coste medido y el escalado requiere carga incremental.** En 10.000 entidades reales de 2025 redujo el tiempo de 4,969 s a 2,428 s (2,05×). La instantánea live contiene además 1.770 eventos únicos y 2.542 versiones, por lo que conservar historial tiene un coste real superior a mantener solo la proyección; las estimaciones a 100 millones siguen siendo extrapolaciones, no una prueba de esa escala.
+2. **La persistencia versionada confirma el estado más reciente sin duplicar claves.** De 2.542 versiones live para 1.770 eventos resultan 772 versiones adicionales; no hay claves repetidas y las 1.770 filas actuales coinciden con la revisión de mayor `updated_ms`. Los escenarios de reinicio y confirmación de Kafka siguen respaldados por la prueba de aceptación anterior; la consulta SQL actual verifica la coherencia persistida y no sustituye una prueba de entrega exactamente una vez.
+3. **La validación de tipo separa los rechazos de los eventos válidos sin país.** La instantánea live registró 110 entradas no sísmicas en cuarentena (20 `quarry blast`, 12 `explosion` y otras 78 de tipos no aceptados). Separadamente, 14.350 de 18.302 eventos replay de 2025 (78,4 %) carecen de país, pero siguen siendo válidos y analizables. La base cubre más de 24 horas, aunque sus marcas de versión no permiten certificar continuidad ininterrumpida; el máximo hueco observado fue de 4 d 13 h 52 min.
 
 ## 8. Límites conocidos
 
