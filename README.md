@@ -186,10 +186,12 @@ El frontend envía siempre la cabecera `ngrok-skip-browser-warning` en sus petic
 
 ## 5. Desplegar el frontend en Netlify
 
+La URL pública definitiva del panel Angular es **https://proyectoobservatoriosismico.netlify.app**. El sitio se publica como una SPA en Netlify y consulta la API FastAPI mediante el túnel HTTPS de ngrok; ambos, API y túnel, deben estar activos para que funcionen los datos en vivo.
+
 1. Publica el repositorio sin `.env`, credenciales ni `node_modules`.
 2. Conecta el repositorio a Netlify. Configura el campo **Base directory** (directorio base) como `frontend`.
 3. Usa `npm run build` como comando de compilación y `dist/observatorio/browser` como directorio que se publicará. [frontend/netlify.toml](./frontend/netlify.toml) ya contiene esos valores y `frontend/public/_redirects` permite recargar las rutas de la aplicación de una sola página (SPA).
-4. Configura `frontend/public/config.json` con la URL HTTPS pública de ngrok (sin `/api`) y vuelve a publicar para que el archivo se incluya en la compilación.
+4. Configura `apiBaseUrl` en `frontend/public/config.json` como `https://vertebrae-giggling-hardwired.ngrok-free.dev` (sin `/api`) y vuelve a publicar para incluir la configuración.
 5. Si se usa un dominio personalizado, en `.env` define `NETLIFY_ORIGIN` con el origen exacto (sin ruta) y añádelo a `CORS_ORIGINS` junto con `http://localhost:4200`. Los sitios bajo `*.netlify.app` ya están permitidos por el patrón HTTPS del middleware.
 6. Aplica la configuración del servidor con `docker compose up -d --force-recreate api` y comprueba el panel y las tres rutas desde el sitio publicado.
 

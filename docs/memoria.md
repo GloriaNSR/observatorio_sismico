@@ -16,6 +16,12 @@ El servidor de la aplicación consta de los cinco servicios requeridos. Angular 
 | `api` | FastAPI; expone `/api/eventos`, `/api/salud` y `/api/estadisticas`. En local solo publica `127.0.0.1:8000`. |
 | Panel (fuera de Compose) | Angular y Leaflet; consulta la API o muestra datos de demostración. Netlify publica la aplicación web; ngrok puede proporcionar acceso HTTPS a la API local. |
 
+### Despliegue y funcionamiento
+
+El entregable web oficial del panel Angular está publicado en Netlify: [https://proyectoobservatoriosismico.netlify.app](https://proyectoobservatoriosismico.netlify.app). Se compila desde `frontend/` con `npm run build` y se publica el directorio `frontend/dist/observatorio/browser`, que incluye la configuración JSON y las redirecciones SPA.
+
+Para el modo API, `frontend/public/config.json` usa `apiBaseUrl=https://vertebrae-giggling-hardwired.ngrok-free.dev` sin añadir `/api`. El túnel HTTPS de ngrok reenvía al servicio local mediante `ngrok http 8000`; por tanto, la API y el túnel deben permanecer activos para servir datos en vivo. CORS permite el origen del panel y la cabecera `ngrok-skip-browser-warning`. Al cambiar la configuración del frontend se debe volver a compilar y publicar en Netlify.
+
 El recorrido de tiempo real y el de reproducción histórica comparten el tema, el consumidor y las reglas de persistencia. El campo `mode` (`live`/`replay`) separa claves, filas y consultas; la API usa `live` de forma predeterminada. Durante la medición, el grupo de consumidores tenía una partición Kafka y no presentaba retraso de lectura.
 
 ## 2. Modelo conceptual, lógico y físico
