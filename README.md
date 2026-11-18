@@ -2,6 +2,8 @@
 
 Aplicación para ingerir, validar y visualizar terremotos publicados por el USGS. El flujo combina Kafka y PostgreSQL para procesar eventos en tiempo real y reproducir un histórico, mientras que una API FastAPI entrega los datos a un panel Angular con mapa y estadísticas.
 
+**Video explicativo:** [(https://proyectoobservatoriosismico.netlify.app)](https://youtu.be/x65UoSanHjM)
+
 **Panel publicado:** [proyectoobservatoriosismico.netlify.app](https://proyectoobservatoriosismico.netlify.app)
 
 **Documentación principal:** [contrato de la API](./CONTRATO-API.md) · [memoria técnica y resultados](./docs/memoria.md) · [evidencias de aceptación](./docs/evidencias/aceptacion.md)
