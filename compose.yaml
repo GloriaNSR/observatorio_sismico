@@ -15,7 +15,7 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
-    restart: on-failure
+    restart: unless-stopped
 
   kafka:
     image: apache/kafka:3.9.1
@@ -45,7 +45,7 @@ services:
       timeout: 10s
       retries: 12
       start_period: 30s
-    restart: on-failure
+    restart: unless-stopped
 
   productor:
     image: observatorio-sismico-backend:local
@@ -76,7 +76,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
-    restart: on-failure
+    restart: unless-stopped
 
   consumidor:
     image: observatorio-sismico-backend:local
@@ -104,7 +104,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
-    restart: on-failure
+    restart: unless-stopped
 
   api:
     image: observatorio-sismico-backend:local
@@ -130,7 +130,30 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-    restart: on-failure
+    restart: unless-stopped
+
+  ngrok:
+    image: ngrok/ngrok:3
+    command: ["http", "--url=${NGROK_DOMAIN:?Define NGROK_DOMAIN in .env}", "api:8000"]
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?Define NGROK_AUTHTOKEN in .env}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:4200:80"
+    depends_on:
+      api:
+        condition: service_healthy
+      ngrok:
+        condition: service_started
+    restart: unless-stopped
 
 volumes:
   postgres_data:

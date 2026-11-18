@@ -27,7 +27,7 @@ USGS ──> productor ──> Kafka (terremotos) ──> consumidor ──> Pos
                                                                          └──> Angular + Leaflet
 ```
 
-Compose levanta cinco servicios. El frontend se ejecuta en el equipo local o se publica en Netlify; no es un sexto contenedor.
+Compose levanta siete servicios, incluido el frontend estático y el túnel ngrok. Netlify puede publicar el mismo frontend para acceso remoto.
 
 | Servicio | Función |
 |---|---|
@@ -36,7 +36,8 @@ Compose levanta cinco servicios. El frontend se ejecuta en el equipo local o se 
 | `productor` | Consulta el feed en tiempo real y ofrece la carga y reproducción del histórico. |
 | `consumidor` | Valida eventos, asigna país y persiste o pone en cuarentena cada mensaje. |
 | `api` | API FastAPI para eventos, salud y estadísticas. |
-| `frontend/` | Aplicación Angular y Leaflet, independiente de Compose. |
+| `ngrok` | Expone la API mediante el dominio estable configurado en la cuenta ngrok. |
+| `frontend` | Sirve la aplicación Angular compilada con Nginx en `http://localhost:4200`. |
 
 ### Estructura del repositorio
 
@@ -53,15 +54,15 @@ Compose levanta cinco servicios. El frontend se ejecuta en el equipo local o se 
 ## Requisitos
 
 - Docker Desktop con Docker Compose v2.
-- Node.js `22.12+` (rama 22) o Node.js 24, y npm para ejecutar o compilar el frontend.
+- Node.js `22.12+` (rama 22) o Node.js 24, y npm solo si desarrollas/compilas el frontend fuera de Docker.
 - Acceso a Internet para consultar el feed y descargar el histórico cuando no exista una copia local.
-- ngrok y una cuenta Netlify solo para publicar y conectar el panel con la API local.
+- Cuenta ngrok con su authtoken y dominio asignado para el acceso remoto; no es necesario abrir ngrok manualmente.
 
 ## Puesta en marcha local
 
 Los comandos siguientes se ejecutan en PowerShell desde la raíz del repositorio.
 
-1. Crea la configuración local y cambia la contraseña de ejemplo antes de exponer servicios:
+1. Crea la configuración local y cambia la contraseña de ejemplo. En `.env`, guarda también el authtoken y dominio de ngrok:
 
    ```powershell
    if (-not (Test-Path .env)) { Copy-Item .env.example .env }
@@ -69,6 +70,7 @@ Los comandos siguientes se ejecutan en PowerShell desde la raíz del repositorio
    ```
 
    Si ya existe `.env`, no hace falta volver a copiarlo. No publiques ese archivo ni incluyas credenciales en el frontend.
+   `NGROK_AUTHTOKEN` debe permanecer solo en `.env`; `NGROK_DOMAIN` es el dominio asignado en la cuenta ngrok.
 
 2. Construye y arranca los servicios:
 
@@ -78,7 +80,7 @@ Los comandos siguientes se ejecutan en PowerShell desde la raíz del repositorio
    docker compose config --quiet
    ```
 
-   Espera a que los cinco servicios estén saludables. La API local queda disponible en `http://127.0.0.1:8000`; PostgreSQL y Kafka solo se exponen dentro de la red de Compose.
+   Espera a que API, PostgreSQL y Kafka estén saludables y a que `ngrok` y `frontend` estén en ejecución. La web local queda disponible en `http://localhost:4200`, la API en `http://127.0.0.1:8000` y, desde fuera, en el dominio ngrok configurado. PostgreSQL y Kafka solo se exponen dentro de la red de Compose.
 
    Si ya conservas un volumen PostgreSQL de una versión anterior, vuelve a aplicar el SQL idempotente para crear las tablas añadidas:
 
@@ -96,7 +98,7 @@ Los comandos siguientes se ejecutan en PowerShell desde la raíz del repositorio
 
    `/api/salud` debe indicar `status: ok` y `database: available`. El productor consulta el feed aproximadamente cada 60 segundos; los eventos aparecerán cuando el USGS publique datos.
 
-4. En otra terminal, inicia el panel:
+4. Para desarrollo del frontend fuera de Docker, puedes iniciar el servidor Angular:
 
    ```powershell
    cd frontend
@@ -104,7 +106,7 @@ Los comandos siguientes se ejecutan en PowerShell desde la raíz del repositorio
    npm start
    ```
 
-   Abre <http://localhost:4200>. Comprueba que `frontend/public/config.json` tenga en `apiBaseUrl` la dirección de la API que quieras usar (por ejemplo, `http://localhost:8000` para una API local). Para compilar la aplicación de producción, ejecuta `npm run build`; el resultado queda en `frontend/dist/observatorio/browser`.
+   En el uso habitual no necesitas ejecutar estos comandos: Compose sirve la versión compilada en <http://localhost:4200>. Para compilar manualmente, `npm run build` genera `frontend/dist/observatorio/browser`.
 
 ## API
 
@@ -181,14 +183,13 @@ Para la defensa, lleva las consultas y tablas de la memoria junto con las captur
 
 Netlify publica el frontend como una SPA. La configuración registrada usa `frontend` como directorio base, `npm run build` como comando y `dist/observatorio/browser` como directorio de publicación. La URL del panel es [proyectoobservatoriosismico.netlify.app](https://proyectoobservatoriosismico.netlify.app).
 
-Para conectar el panel a la API local:
+El panel usa el dominio ngrok asignado a la cuenta, configurado en `frontend/public/config.json`. Para iniciar juntos la web, la API y el túnel:
 
-1. Configura `apiBaseUrl` en `frontend/public/config.json` con la URL HTTPS vigente de ngrok, sin añadir `/api`.
-2. Inicia el túnel con `ngrok http 8000`. La API y el túnel deben permanecer activos para ofrecer datos en vivo.
-3. Añade el origen del panel a `CORS_ORIGINS` en `.env` y aplica los cambios con `docker compose up -d --force-recreate api`.
-4. Vuelve a compilar y publicar el frontend si cambiaste su configuración.
+```powershell
+docker compose up -d
+```
 
-La URL del túnel puede cambiar. No guardes tokens ni credenciales en `config.json`: el archivo se distribuye con el frontend público. Para dominios personalizados, configura el origen correspondiente en el servidor. La [memoria técnica](./docs/memoria.md) describe la configuración y las mediciones con más detalle.
+Abre <http://localhost:4200> para la web local o la URL de Netlify para la publicada. El túnel reenvía al servicio `api:8000` y no se debe iniciar otro `ngrok http` en Windows. El dominio asignado se reutiliza al reiniciar, pero solo está disponible mientras el ordenador, Docker y la conexión estén activos. No guardes el authtoken en `config.json`: ese archivo se distribuye con el frontend público. Tras cambiar el dominio, actualiza `NGROK_DOMAIN` en `.env` y `apiBaseUrl` en `frontend/public/config.json`, y vuelve a desplegar Netlify.
 
 ## Parada
 
