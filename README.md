@@ -106,7 +106,7 @@ Los comandos siguientes se ejecutan en PowerShell desde la raíz del repositorio
    npm start
    ```
 
-   En el uso habitual no necesitas ejecutar estos comandos: Compose sirve la versión compilada en <http://localhost:4200>. Para compilar manualmente, `npm run build` genera `frontend/dist/observatorio/browser`.
+   En el uso habitual no necesitas ejecutar estos comandos: Compose sirve la versión compilada en <http://localhost:4200>. Los campos **Inicio** y **Fin** aceptan `DD-MM-AAAA HH:mm:ss` en UTC. Para compilar manualmente, `npm run build` genera `frontend/dist/observatorio/browser`.
 
 ## API
 
@@ -159,7 +159,7 @@ npm ci
 npm run build
 ```
 
-En las evidencias del 6 de noviembre de 2026 constan 37 pruebas del servidor y 2 de infraestructura aprobadas, junto con la compilación Angular correcta. El 16 de noviembre se comprobó visualmente la versión publicada en Netlify y se levantó un túnel ngrok real: `/api/salud`, `/api/eventos` y `/api/estadisticas` respondieron HTTP 200; el preflight `OPTIONS` desde el origen Netlify también respondió 200 con CORS. En el navegador se verificaron datos live y el cambio a replay (18.302 registros del año 2025; 1.000 en la página y estadísticas completas). El 18 de noviembre pasaron 42 pruebas backend y el build Angular; también se verificaron los cinco servicios Compose, el CORS local y el registro de consultas USGS. No se publicó una nueva versión de Netlify. El panel público depende de que el túnel siga activo; si se cierra, deja de recibir datos. Los resultados detallados están en [evidencias de aceptación](./docs/evidencias/aceptacion.md) y [evidencias SQL del 18 de noviembre](./docs/evidencias_24h.md#5-verificación-tras-desplegar-la-auditoría-usgs).
+En las evidencias del 6 de noviembre de 2026 constan 37 pruebas del servidor y 2 de infraestructura aprobadas, junto con la compilación Angular correcta. El 16 de noviembre se comprobó visualmente la versión publicada en Netlify y se levantó un túnel ngrok real: `/api/salud`, `/api/eventos` y `/api/estadisticas` respondieron HTTP 200; el preflight `OPTIONS` desde el origen Netlify también respondió 200 con CORS. En el navegador se verificaron datos live y el cambio a replay (18.302 registros del año 2025; 1.000 en la página y estadísticas completas). El 18 de noviembre pasaron 42 pruebas backend y el build Angular; después se verificaron los siete servicios Compose, el acceso local, el túnel real y CORS desde localhost y Netlify. Las capturas visuales se regeneraron a las 13:36 UTC para reflejar el formato de fecha; la publicación de Netlify no se actualizó con el nuevo código de la interfaz. Su configuración ya apunta al dominio ngrok vigente. El panel público depende de que el túnel siga activo; si se cierra, deja de recibir datos. Los resultados detallados están en [evidencias de aceptación](./docs/evidencias/aceptacion.md) y [evidencias SQL del 18 de noviembre](./docs/evidencias_24h.md#5-verificación-tras-desplegar-la-auditoría-usgs).
 
 ## Evaluación según la rúbrica
 
@@ -177,7 +177,7 @@ El [enunciado oficial, §13](./ENUNCIADO.md#13-evaluación) evalúa cinco criter
 
 | **Reflexión** — reflexión excelente y propuestas | [Memoria, §5, §7 y §8](./docs/memoria.md#5-rendimiento-y-complejidad); mediciones de 100, 1.000 y 10.000 eventos; [costes, escalado y mejoras](./docs/memoria.md#complejidad-almacenamiento-y-escalado). | Comparar complejidad, tiempo y memoria; justificar el índice espacial con sus límites; separar mediciones de extrapolaciones; declarar supuestos de coste y proponer mejoras priorizadas (lotes, particiones Kafka, particionado y pruebas de recuperación). |
 
-Para la defensa, lleva las consultas y tablas de la memoria junto con las capturas del [panel live](./docs/evidencias/panel-live-2026-11-18.png) y del [panel replay 2025](./docs/evidencias/panel-replay-2025-2026-11-18.png). Las imágenes muestran el periodo, el recuento y las distribuciones comunicados en la memoria.
+Para la defensa, lleva las consultas y tablas de la memoria junto con las capturas del [panel live](./docs/evidencias/panel-live-2026-11-18.png) y del [panel replay 2025](./docs/evidencias/panel-replay-2025-2026-11-18.png). Se actualizaron el 18-11-2026 a las 13:36 UTC: live muestra 191 eventos y replay 18.302 resultados (1.000 en la página). Los datos live cambian con el tiempo; las cifras analíticas de la memoria corresponden a los cortes que allí se indican.
 
 ## Publicación del panel y acceso remoto
 

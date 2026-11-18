@@ -54,11 +54,17 @@
     <div class="filter-grid">
       <label>
         <span>Inicio <small>UTC · inclusivo</small></span>
-        <input type="datetime-local" [ngModel]="filters().start" (ngModelChange)="setStart($event)" aria-describedby="period-help">
+        <input type="text" inputmode="numeric" autocomplete="off" spellcheck="false"
+          placeholder="DD-MM-AAAA HH:mm:ss" [ngModel]="filters().start"
+          [ngModelOptions]="{ updateOn: 'blur' }" (ngModelChange)="setStart($event)"
+          aria-describedby="period-help">
       </label>
       <label>
         <span>Fin <small>UTC · exclusivo</small></span>
-        <input type="datetime-local" [ngModel]="filters().end" (ngModelChange)="setEnd($event)" aria-describedby="period-help">
+        <input type="text" inputmode="numeric" autocomplete="off" spellcheck="false"
+          placeholder="DD-MM-AAAA HH:mm:ss" [ngModel]="filters().end"
+          [ngModelOptions]="{ updateOn: 'blur' }" (ngModelChange)="setEnd($event)"
+          aria-describedby="period-help">
       </label>
       <label>
         <span>Magnitud mínima</span>
@@ -82,7 +88,7 @@
         </select>
       </label>
     </div>
-    <p id="period-help" class="help-text"><span class="help-mark" aria-hidden="true">i</span> Las fechas se interpretan en UTC. El inicio es inclusivo y el fin exclusivo. Cada cambio actualiza eventos y estadísticas.</p>
+    <p id="period-help" class="help-text"><span class="help-mark" aria-hidden="true">i</span> Formato: DD-MM-AAAA HH:mm:ss. Las fechas se interpretan en UTC; el inicio es inclusivo y el fin exclusivo. Cada cambio actualiza eventos y estadísticas.</p>
   </section>
 
   <section class="system-state panel" aria-labelledby="system-title" aria-live="polite">
@@ -110,13 +116,13 @@
       <p class="alert alert-stale" role="status">
         <span aria-hidden="true">◷</span>Datos desactualizados: última ingesta correcta de USGS
         {{ lastIngestion() === null ? 'no disponible' : formatTimestamp(lastIngestion()) }}
-        ({{ ingestionAgeText() }}).
+        (UTC; {{ ingestionAgeText() }}).
       </p>
     }
     <dl class="state-grid">
-      <div><dt>Última lectura correcta</dt><dd>{{ lastRead() }} <span>({{ readingAge() }})</span></dd></div>
-      <div><dt>Generación de la API</dt><dd>{{ generated() }}</dd></div>
-      <div><dt>Última ingesta correcta USGS</dt><dd>{{ lastIngestion() === null ? 'ND' : formatTimestamp(lastIngestion()) }}</dd></div>
+      <div><dt>Última lectura correcta (UTC)</dt><dd>{{ lastRead() }} <span>({{ readingAge() }})</span></dd></div>
+      <div><dt>Generación de la API (UTC)</dt><dd>{{ generated() }}</dd></div>
+      <div><dt>Última ingesta correcta USGS (UTC)</dt><dd>{{ lastIngestion() === null ? 'ND' : formatTimestamp(lastIngestion()) }}</dd></div>
       <div><dt>Antigüedad de ingesta</dt><dd>{{ appMode() === 'demo' ? 'No disponible en la demostración' : ingestionAgeText() }}</dd></div>
       <div><dt>Periodo consultado</dt><dd>{{ period() }}</dd></div>
       <div><dt>Filtros de la última lectura válida</dt><dd>{{ appliedFilters() }}</dd></div>

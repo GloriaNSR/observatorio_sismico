@@ -69,3 +69,9 @@ La ejecución registrada de los pasos 3 y 4 utilizó la interceptación de red d
 - Se revisó visualmente la vista de escritorio. Las capturas se mostraron durante la comprobación, pero no se guardaron como archivos en el repositorio. Tampoco se modificó ni volvió a publicar Netlify.
 
 El túnel se levantó solo para esta prueba y se detuvo al terminar; debe iniciarse de nuevo para otra demostración. Si se detiene, el panel público seguirá cargando, pero no podrá consultar la API local. Esta comprobación confirma TLS, conectividad y CORS desde el origen Netlify en ese momento; no garantiza disponibilidad continua, funcionamiento desde otras redes ni revisión en todos los tamaños de pantalla.
+
+## Actualización visual del formato de fechas
+
+**Fecha:** 18 de noviembre de 2026, 13:36 UTC. La interfaz local servida desde Docker ahora muestra y acepta fechas con el formato `DD-MM-AAAA HH:mm:ss`, interpretado en UTC. Se comprobó el filtro con `18-11-2026 13:24:01` y `18-11-2026 13:25:01`; el periodo consultado se mostró en ese formato y la petición se procesó sin error. El modo replay presenta `[01-01-2025 00:00:00, 01-01-2026 00:00:00)`.
+
+Se regeneraron las capturas [live](./panel-live-2026-11-18.png) y [replay](./panel-replay-2025-2026-11-18.png): la primera muestra 191 eventos a las `13:36:03Z`; la segunda, 18.302 resultados históricos con 1.000 eventos visibles a las `13:36:39Z`. Los recuentos live cambian y son independientes de la instantánea SQL anterior. La web local respondió HTTP 200 y los preflight CORS para localhost y Netlify también respondieron HTTP 200 a través del túnel. Netlify aún no se ha vuelto a publicar con el nuevo código de interfaz.

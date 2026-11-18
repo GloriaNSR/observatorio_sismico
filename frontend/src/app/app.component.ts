@@ -111,8 +111,8 @@ type ApiHealth = {
 type CountryOption = { id: string; name: string };
 type HourCount = { hour: number; label: string; count: number };
 
-const REPLAY_START = '2025-01-01T00:00';
-const REPLAY_END = '2026-01-01T00:00';
+const REPLAY_START = '01-01-2025 00:00:00';
+const REPLAY_END = '01-01-2026 00:00:00';
 const HOUR_MS = 60 * 60 * 1000;
 
 @Component({
@@ -434,7 +434,7 @@ export class AppComponent implements OnDestroy {
   formatTimestamp(value: number | null | undefined): string {
     if (typeof value !== 'number' || !Number.isFinite(value)) return 'ND';
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? 'ND' : date.toISOString();
+    return Number.isNaN(date.getTime()) ? 'ND' : this.formatUtcDateTime(date);
   }
 
   readingAge(): string {
@@ -451,12 +451,18 @@ export class AppComponent implements OnDestroy {
   formatPeriod(value: string | null): string {
     if (!value) return 'ND';
     const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
+    return Number.isNaN(parsed.getTime()) ? value : this.formatUtcDateTime(parsed);
   }
 
   formatHour(timestamp: number): string {
     const date = new Date(timestamp);
-    return Number.isNaN(date.getTime()) ? 'ND' : `${date.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+    return Number.isNaN(date.getTime()) ? 'ND' : `${this.formatUtcDateTime(date).slice(0, 16)} UTC`;
+  }
+
+  private formatUtcDateTime(date: Date): string {
+    const pad = (value: number, length = 2) => String(value).padStart(length, '0');
+    return `${pad(date.getUTCDate())}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCFullYear(), 4)} `
+      + `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
   }
 
   ngOnDestroy(): void {
@@ -612,11 +618,33 @@ export class AppComponent implements OnDestroy {
 
   private toUtcTimestamp(value: string, label: string): { value: string | null; error: string | null } {
     if (!value.trim()) return { value: null, error: null };
-    const timestamp = Date.parse(`${value}Z`);
-    if (!Number.isFinite(timestamp)) {
+    const match = /^(\d{2})-(\d{2})-(\d{4}) (\d{2}):(\d{2}):(\d{2})$/.exec(value.trim());
+    if (!match) {
+      return { value: null, error: `La fecha/hora de ${label} debe tener el formato DD-MM-AAAA HH:mm:ss (UTC).` };
+    }
+
+    const [, dayText, monthText, yearText, hourText, minuteText, secondText] = match;
+    const day = Number(dayText);
+    const month = Number(monthText);
+    const year = Number(yearText);
+    const hour = Number(hourText);
+    const minute = Number(minuteText);
+    const second = Number(secondText);
+    if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) {
       return { value: null, error: `La fecha/hora de ${label} no es válida.` };
     }
-    return { value: new Date(timestamp).toISOString(), error: null };
+
+    const date = new Date(0);
+    date.setUTCFullYear(year, month - 1, day);
+    date.setUTCHours(hour, minute, second, 0);
+    if (
+      date.getUTCFullYear() !== year ||
+      date.getUTCMonth() !== month - 1 ||
+      date.getUTCDate() !== day
+    ) {
+      return { value: null, error: `La fecha/hora de ${label} no es válida.` };
+    }
+    return { value: date.toISOString(), error: null };
   }
 
   private async readJson<T>(
@@ -776,7 +804,7 @@ export class AppComponent implements OnDestroy {
     const now = Date.now();
     this.readingTimestamp.set(now);
     this.ageTick.set(now);
-    this.lastRead.set(new Date(now).toISOString());
+    this.lastRead.set(this.formatTimestamp(now));
   }
 
   private formatAge(seconds: number): string {
