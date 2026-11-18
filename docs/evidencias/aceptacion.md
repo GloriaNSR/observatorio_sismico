@@ -55,4 +55,17 @@ Las pruebas nuevas están en `backend/tests/acceptance/test_acceptance.py`. Usan
 3. Con el panel abierto, detener ngrok y cambiar un filtro para provocar una petición. Registrar el aviso, las filas que se conservan y el tiempo transcurrido desde la última lectura.
 4. Volver a iniciar ngrok. Si cambia la URL, actualizar `apiBaseUrl` y verificar que el panel se recupera sin reiniciar Angular.
 
-La ejecución registrada de los pasos 3 y 4 utilizó la interceptación de red del navegador como sustituto porque no había un túnel real disponible. Antes de una demostración pública, todavía se deben comprobar la URL HTTPS, CORS y las cuotas de la cuenta ngrok utilizada.
+La ejecución registrada de los pasos 3 y 4 utilizó la interceptación de red del navegador como sustituto porque no había un túnel real disponible. La comprobación posterior con ngrok real, URL HTTPS y CORS desde Netlify se documenta a continuación.
+
+## Comprobación visual del panel y del túnel real
+
+**Fecha:** 16 de noviembre de 2026. **Entorno:** versión ya publicada en Netlify, cinco servicios Compose saludables y túnel ngrok HTTPS temporal hacia el puerto local 8000.
+
+- La página pública de Netlify cargó con HTTP 200. Antes de iniciar ngrok, la API configurada devolvía 404 y el panel mostraba el aviso de conexión fallida; esto era coherente con que el túnel no estuviera activo.
+- Con `ngrok http 8000` en ejecución, `GET /api/salud`, `GET /api/eventos?mode=live&limit=3` y `GET /api/estadisticas?mode=live` respondieron HTTP 200 por HTTPS.
+- El preflight `OPTIONS /api/salud`, con origen `https://proyectoobservatoriosismico.netlify.app` y la cabecera `ngrok-skip-browser-warning`, respondió HTTP 200. La respuesta autorizó ese origen, los métodos `GET, OPTIONS` y la cabecera solicitada.
+- En el navegador, el panel pasó a «API accesible» y mostró telemetría, mapa Leaflet, leyenda, eventos y análisis. En la consulta live se observaron 171 eventos en ese momento.
+- Al elegir «Reproducción histórica», el panel consultó `[2025-01-01, 2026-01-01)`: la API informó 18.302 registros coincidentes, mostró una página de 1.000 y calculó las estadísticas sobre el conjunto completo. No se mezcló el modo replay con live.
+- Se revisó visualmente la vista de escritorio. Las capturas se mostraron durante la comprobación, pero no se guardaron como archivos en el repositorio. Tampoco se modificó ni volvió a publicar Netlify.
+
+El túnel se levantó solo para esta prueba y se detuvo al terminar; debe iniciarse de nuevo para otra demostración. Si se detiene, el panel público seguirá cargando, pero no podrá consultar la API local. Esta comprobación confirma TLS, conectividad y CORS desde el origen Netlify en ese momento; no garantiza disponibilidad continua, funcionamiento desde otras redes ni revisión en todos los tamaños de pantalla.

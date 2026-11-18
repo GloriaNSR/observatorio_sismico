@@ -1,6 +1,6 @@
 # Memoria del observatorio sísmico
 
-**Corte de evidencias:** 14 de noviembre de 2026 (instantánea PostgreSQL a las 09:56:54 UTC).
+**Corte de evidencias:** 18 de noviembre de 2026 (despliegue validado y captura live entre las 09:03:45 y las 09:06:45 UTC; se conservan también instantáneas SQL anteriores identificadas por fecha).
 **Fuente principal:** catálogo de eventos USGS FDSN y canal GeoJSON en tiempo real.
 
 ## 1. Arquitectura desplegada
@@ -36,8 +36,9 @@ El recorrido de tiempo real y el de reproducción histórica comparten el tema, 
 - `evento_version`: historial con GeoJSON original; restricción única `(event_id, updated_ms, mode)`.
 - `cuarentena`: modo, identificador si existe, motivo y JSON original rechazado.
 - `estado_ingesta` y `estado_productor`: marcas de salud y deduplicación del productor.
+- `consulta_usgs`: una fila por sondeo live, con periodo de petición, estado HTTP, bytes, latencia, cantidad de features, metadata de USGS y errores; retención de 30 días.
 
-**Físico.** PostgreSQL 16 impone claves primarias y foráneas, los valores permitidos `live`/`replay` y los límites geográficos WGS84. Los índices B-tree existentes cubren `(event_time, mode)`, magnitud y país. Kafka conserva el mensaje `{source, ingested_at, mode, event}`; las fechas originales de cada entidad GeoJSON se guardan en UTC.
+**Físico.** PostgreSQL 16 impone claves primarias y foráneas, los valores permitidos `live`/`replay` y los límites geográficos WGS84. Los índices B-tree existentes cubren `(event_time, mode)`, magnitud y país; una clave primaria compuesta optimiza la búsqueda del checkpoint por `(event_id, mode)`. `consulta_usgs` se indexa por fecha de petición y retiene 30 días. Kafka conserva el mensaje `{source, ingested_at, mode, event}`; las fechas originales de cada entidad GeoJSON se guardan en UTC.
 
 ### Idempotencia y confirmación de offsets
 
@@ -81,7 +82,7 @@ La acción predeterminada `todo` descarga y luego publica los eventos; `--accion
 | Identidad y tiempos | `id` debe ser texto no vacío; `time` y `updated` deben ser enteros Unix en milisegundos convertibles a UTC. |
 | Magnitud y profundidad | Se admiten valores numéricos finitos o `null`; el consumidor conserva `NULL`, no lo sustituye por cero. |
 | Campos descriptivos | `magType` y `place` deben ser texto o `null`; la descripción original se preserva en base de datos. |
-| Asignación geográfica | Un punto válido se cruza con 177 polígonos en EPSG:4326; si no está dentro de un país, se mantiene como evento válido con `country_id = NULL`. |
+| Asignación geográfica | Un punto válido se cruza con 177 polígonos en EPSG:4326; si no está dentro de un país, se mantiene como evento válido con `country_id = NULL`. `within` excluye los puntos exactamente sobre una frontera; si polígonos se solapan y hay varias coincidencias interiores, se elige determinísticamente el `ADM0_A3` lexicográficamente menor. |
 | Versionado | Una versión se identifica por `(event_id, updated_ms, mode)`; solo una revisión con `updated_ms` superior reemplaza el registro actual del mismo modo. |
 
 Consulta reproducible sobre el histórico 2025:
@@ -109,6 +110,16 @@ Para presentar ubicaciones, el panel traduce al español las expresiones regular
 
 La API no publica un promedio de magnitud: informa por separado los valores nulos en la distribución y `min_mag` los excluye mediante la comparación SQL. El promedio diario de la comparación histórica corresponde al **recuento de eventos**, no a un promedio de magnitudes. La prueba de magnitud nula verifica el total, `null_count` y que no aumente ningún intervalo numérico.
 
+### Calidad observada en una consulta real del feed
+
+El 18-11-2026 a las `08:52:32Z` se midió una respuesta real del endpoint live: HTTP 200, 152.724 bytes y 85,42 ms de latencia observada para recibir el cuerpo. Es una sola observación, no una latencia media ni un SLA. USGS devolvió 214 features; 211 tenían `properties.type="earthquake"` y tres se excluyeron (dos `quarry blast`, una `explosion`). En las 214 features, `time`, `updated`, `mag`, `magType`, `type` y `place` eran no nulos, la geometría era `Point` y longitud/latitud estaban dentro de WGS84. El contrato interpreta `time` y `updated` como milisegundos Unix, magnitud como valor numérico opcional y las coordenadas como longitud, latitud y profundidad en km.
+
+La respuesta procesada contenía 211 terremotos live dentro de las 24 horas consultadas. En la captura posterior del panel, a las `09:06:05Z`, la API devolvió 212 eventos dentro de sus últimas 24 horas predeterminadas, de los que 32 tenían magnitud `>=4`. A las `09:06:45Z`, PostgreSQL contenía 2.487 eventos live actuales; 37 magnitudes negativas y 36 profundidades negativas se conservaron, sin declararlas inválidas por su signo, y 433 eventos no tenían país asignado. En el histórico equivalente de 2025, con magnitud `>=4`, había 18.302 eventos; ninguno tenía magnitud o profundidad nula y 14.350 (78,4 %) carecían de país.
+
+**Unicidad y consistencia.** La instantánea live contenía 3.637 versiones para 2.485 identificadores, con cero claves duplicadas `(event_id, updated_ms, mode)`. Los 2.485 estados actuales coincidían con la revisión de mayor `updated_ms`. En el original de esas versiones, `time`, `updated` y `place` eran no nulos en 3.637/3.637 casos, mientras que `mag` y `magType` lo eran en 3.636/3.637; los valores opcionales nulos se conservaron. La actualidad se midió por separado del tiempo de respuesta: entre ocurrencia e ingesta, la mediana fue 11.485 s (3 h 11 min), P95 76.801 s (21 h 20 min) y máximo 86.373 s (23 h 59 min). Esto es retraso evento–ingesta observado en versiones, no latencia HTTP de USGS.
+
+**Acciones y limitaciones.** Los tipos que no son `earthquake` se guardan en cuarentena con motivo y GeoJSON original; magnitud/profundidad nulas no se convierten en cero; valores negativos se conservan; y un evento sin asignación espacial permanece analizable como «Sin país asignado». La muestra de feed valida completitud solo para esa respuesta y no demuestra completitud general de USGS. La exactitud absoluta no se puede certificar sin una fuente sísmica independiente; la asignación territorial depende del catálogo Natural Earth simplificado. Las consultas live registran estado HTTP, bytes, latencia, metadata y conteos en `consulta_usgs`, retenidos 30 días; el GeoJSON original se conserva por versión o en cuarentena, no como una copia completa repetida cada minuto. El SQL reproducible y las salidas de esta captura están en [evidencias_24h.md](./evidencias_24h.md).
+
 ## 5. Rendimiento y complejidad
 
 ### Método y entorno
@@ -135,11 +146,29 @@ Con 10.000 entradas, el índice fue `2,05×` más rápido que el recorrido compl
 
 La validación de los campos de cada evento es `O(1)`. Con `N` eventos y `C=177` países, la búsqueda lineal requiere `O(N·C)` operaciones. El índice espacial se construye una sola vez (coste esperado `O(C log C)`) y cada consulta STRtree tiene un coste aproximado de `O(log C + k)` para los candidatos y resultados; en el peor caso sigue siendo `O(C)` si se solapan muchas cajas geográficas. El coste total esperado es `O(C log C + N log C)` y, al ser `C` fijo y pequeño, el crecimiento observado respecto de `N` es esencialmente lineal. La memoria del índice es `O(C)`; el consumidor procesa los mensajes a medida que llegan y no necesita cargar todos los eventos en memoria.
 
+La búsqueda del checkpoint de un evento usa la clave B-tree `(event_id, mode)` de `estado_productor`: coste esperado y peor caso `O(log P)` para `P` checkpoints. La inserción de cada revisión usa la restricción única `(event_id, updated_ms, mode)`, también `O(log V)` en `V` versiones, y resuelve reenvíos sin una búsqueda secuencial. `EXPLAIN` sobre la base activa confirmó `Index Scan using estado_productor_pkey`.
+
+La agregación por hora primero limita los hechos al intervalo con `(event_time, mode)` y luego agrupa por `date_trunc` UTC. Para `R` filas del intervalo y `G` horas con actividad, el coste esperado es `O(log E + R + G)` con búsqueda indexada y agregación hash; si PostgreSQL necesita ordenar, el término de agrupación pasa a `O(R log R)` y la memoria del agregado depende de `G`. El plan real para la ventana live de 24 horas utilizó `Index Only Scan using idx_evento_actual_event_time_mode`, seguido de ordenación y `GroupAggregate`. La interfaz completa las horas vacías y limita la gráfica a las 168 ventanas más recientes.
+
 En la medición, `evento_actual` ocupaba 6,24 MB incluidos sus índices, y `evento_version`, 21,69 MB; había 19.032 registros actuales y 19.283 versiones. Al extrapolar esa proporción, se estiman aproximadamente **147 GB para 100 millones de eventos y un historial equivalente**, incluidos los índices actuales de ambas tablas, pero sin espacio libre, registros WAL, copias de seguridad, réplicas ni revisiones adicionales. Es una estimación de almacenamiento, no una prueba con 100 millones de eventos. El archivo GeoJSON de entrada ocupa unos 13 MB por cada 18.302 eventos.
 
 Extrapolar el tiempo indexado de 10.000 eventos a 100 millones equivale a unas 6,75 horas de CPU en serie. Es solo una referencia basada en el bucle Python; no representa un acuerdo de nivel de servicio (SLA) ni incluye inserciones o creación de índices. Para ese volumen conviene procesar los datos en lotes o como flujo continuo, aumentar las particiones Kafka para permitir consumidores en paralelo, particionar PostgreSQL por fecha y modo, ajustar los índices tras medir consultas reales y reservar espacio para WAL y copias de seguridad. La instalación validada tiene una sola partición Kafka; aumentar el número de consumidores sin añadir particiones no genera paralelismo.
 
-Los componentes de la instalación local no tienen coste de licencia. No se asigna un importe mensual para la nube porque no se han definido proveedor, región, periodo de retención ni alta disponibilidad. Para 100 millones de eventos, la estimación es de unos 147 GB de almacenamiento principal; dos copias completas elevarían el volumen facturable a unos 441 GB, sin contar WAL, espacio libre ni revisiones adicionales. El coste mensual se estima como `441 GB × tarifa regional de almacenamiento + instancias PostgreSQL/Kafka + cómputo + transferencia + retención`. Sin elegir proveedor y región no es posible dar una cotización monetaria fiable. Si ya se dispone del equipo, el coste local incremental de licencias es cero.
+Los componentes locales no tienen coste de licencia. Para hacer explícitos los costes omitidos, esta tabla usa un escenario de planificación y no una factura observada:
+
+| Partida | Supuesto reproducible | Estimación |
+|---|---|---:|
+| Hardware | Equipo existente; valor de reposición supuesto de 1.000 EUR, amortizado en 60 meses | 16,67 EUR/mes imputados; desembolso real desconocido |
+| Electricidad, demostración | 100 W medios, 3 h/día, 30 días y 0,20 EUR/kWh | 1,80 EUR/mes |
+| Electricidad, 24/7 | Mismos 100 W y 0,20 EUR/kWh, 720 h/mes | 14,40 EUR/mes |
+| Almacenamiento local | Base PostgreSQL observada: 38 MB; GeoJSON anual: 12,99 MB; datos en disco existente | Sin coste incremental medido |
+| Transferencia USGS | Respuesta de muestra de 152.724 bytes, un sondeo/minuto durante 30 días | 6,60 GB/mes de entrada estimada; varía con el feed |
+| Mantenimiento | 2 h/mes imputadas a 15 EUR/h | 30 EUR/mes |
+| Desarrollo | Estimación de planificación de 40–80 h a 15 EUR/h; no hay partes horarios | 600–1.200 EUR una vez |
+
+Con esos supuestos, el coste local imputado sería aproximadamente **48,47 EUR/mes** para una demostración de 3 h/día o **61,07 EUR/mes** si el equipo permanece encendido continuamente, más el coste estimado de desarrollo. No incluye tarifas de Internet, sustitución efectiva del equipo, impuestos ni cuotas de terceros; Netlify/ngrok dependen de sus planes y límites vigentes. Los valores de 100 W, 1.000 EUR y 15 EUR/h son hipótesis, no mediciones ni precios declarados por la alumna; deben sustituirse si se dispone de lecturas o costes reales.
+
+No se asigna un importe cloud mensual porque no se han elegido proveedor, región ni retención. Para 100 millones de eventos, la extrapolación existente es de unos 147 GB primarios; dos copias completas elevarían el volumen a unos 441 GB, antes de WAL, espacio libre y revisiones. El coste cotizable sería `441 GB × tarifa regional de almacenamiento + instancias PostgreSQL/Kafka + cómputo + transferencia + retención`. Si se dispone del equipo, la licencia local sigue costando cero; eso no equivale a coste total cero.
 
 ### Mejoras propuestas
 
@@ -150,7 +179,7 @@ Los componentes de la instalación local no tienen coste de licencia. No se asig
 
 ## 6. Verificación del sistema
 
-En la validación final, `docker compose config --quiet` terminó correctamente; los cinco servicios estuvieron saludables; `/api/eventos`, `/api/salud` y `/api/estadisticas` devolvieron HTTP 200; el catálogo contenía 177 países. Pasaron 37 pruebas del servidor: de unidad, contrato, flujo de eventos, reproducción histórica y aceptación. También pasaron 2 pruebas de Compose y del esquema. `npm run build` de Angular finalizó correctamente; la interfaz de compilación de Angular solo mostró el aviso conocido de que Leaflet usa CommonJS.
+En la validación del 18-11-2026, `docker compose config --quiet` terminó correctamente y los cinco servicios estuvieron saludables; `/api/salud` devolvió HTTP 200 y reflejó una ingesta reciente. Pasaron 42 pruebas de unidad, contrato, flujo, replay y aceptación. `npm run build` de Angular finalizó correctamente; Angular mostró el aviso conocido de que Leaflet usa CommonJS. La tabla de auditoría registró cuatro sondeos USGS consecutivos correctos tras desplegar la migración.
 
 | # | Prueba de aceptación | Resultado observado |
 |---:|---|---|
@@ -166,17 +195,24 @@ En la validación final, `docker compose config --quiet` terminó correctamente;
 | 10 | Recuperación de la conexión | Al retirar la interceptación, desapareció la alerta y el panel actualizó los datos. No demuestra TLS/CORS de ngrok. |
 | 11 | Aislamiento del modo replay | Un identificador sintético quedó en `mode=replay`, no en `mode=live`; duplicado y revisión procesados idempotentemente. |
 
-Validación transversal: los tres endpoints devolvieron HTTP 200, el catálogo contiene 177 países, pasaron 37 pruebas del servidor y 2 de infraestructura, y Angular compiló correctamente.
+Validación transversal: pasaron 42 pruebas backend y el build Angular; el catálogo contiene 177 países. La compilación de imágenes Docker y la configuración Compose fueron correctas. El acceso desde `http://localhost:4200` recibió el encabezado CORS permitido y un origen Netlify preview no configurado no recibió `Access-Control-Allow-Origin`.
 
 Como evidencia complementaria del 14-11-2026, la base consultada directamente tenía 1.770 eventos live, 2.542 versiones, cero colisiones de clave de versión, 110 filas en cuarentena y 1.828 checkpoints live. En esta ejecución solo estaba levantado PostgreSQL; no se reiniciaron Kafka, productor, consumidor ni API y no se repitieron las pruebas HTTP. Los resultados detallados y la limitación sobre continuidad están en [evidencias_24h.md](./evidencias_24h.md).
 
+La verificación del 18-11-2026 desplegó la tabla `consulta_usgs` sobre el volumen existente y recreó API, productor y consumidor. La auditoría registró cuatro respuestas HTTP 200 con 214–215 features cada una. Se guardaron capturas del panel live y de replay 2025 en [panel live](./evidencias/panel-live-2026-11-18.png) y [panel replay](./evidencias/panel-replay-2025-2026-11-18.png). La prueba de CORS se hizo contra el API local; no se volvió a probar un túnel ngrok real.
+
 El detalle de cada uno de los once escenarios, comandos y límites de la prueba de túnel está en [evidencias/aceptacion.md](./evidencias/aceptacion.md).
 
-## 7. Conclusiones técnicas
+## 7. Conclusiones del análisis
 
-1. **El índice espacial reduce el coste medido y el escalado requiere carga incremental.** En 10.000 entidades reales de 2025 redujo el tiempo de 4,969 s a 2,428 s (2,05×). La instantánea live contiene además 1.770 eventos únicos y 2.542 versiones, por lo que conservar historial tiene un coste real superior a mantener solo la proyección; las estimaciones a 100 millones siguen siendo extrapolaciones, no una prueba de esa escala.
-2. **La persistencia versionada confirma el estado más reciente sin duplicar claves.** De 2.542 versiones live para 1.770 eventos resultan 772 versiones adicionales; no hay claves repetidas y las 1.770 filas actuales coinciden con la revisión de mayor `updated_ms`. Los escenarios de reinicio y confirmación de Kafka siguen respaldados por la prueba de aceptación anterior; la consulta SQL actual verifica la coherencia persistida y no sustituye una prueba de entrega exactamente una vez.
-3. **La validación de tipo separa los rechazos de los eventos válidos sin país.** La instantánea live registró 110 entradas no sísmicas en cuarentena (20 `quarry blast`, 12 `explosion` y otras 78 de tipos no aceptados). Separadamente, 14.350 de 18.302 eventos replay de 2025 (78,4 %) carecen de país, pero siguen siendo válidos y analizables. La base cubre más de 24 horas, aunque sus marcas de versión no permiten certificar continuidad ininterrumpida; el máximo hueco observado fue de 4 d 13 h 52 min.
+Las cifras siguientes usan el histórico mundial USGS de 2025 con `eventtype=earthquake` y `minmagnitude=4`, salvo la primera, que compara la ventana live indicada con el promedio diario de ese mismo histórico. La fecha de corte de la comparación live fue 18-11-2026; no se aplica filtro geográfico.
+
+1. **La actividad live de magnitud `>=4` fue menor que la media diaria histórica en esa ventana.** Entre `2026-11-17 08:53:37Z` y `2026-11-18 08:53:37Z` se observaron 32 eventos, frente a una media de 50,142 por día en 2025 (18.302/365), un 36,18 % menos. El año incluye los días sin eventos. La ventana reciente puede estar incompleta por retrasos de publicación; esta diferencia no es una predicción ni una medida de riesgo.
+2. **La muestra histórica está concentrada en la parte baja del umbral elegido.** 16.173 de 18.302 eventos (88,37 %) tuvieron magnitud en `[4, 5)`: 9.743 en `[4, 4.5)` y 6.430 en `[4.5, 5)`. Es una distribución condicionada a `M>=4`; no describe los terremotos de menor magnitud que el filtro excluye.
+3. **La mayoría de las profundidades registradas en el histórico se sitúan en el primer intervalo.** 12.455 de 18.302 eventos (68,05 %) aparecen en `[0, 50)` km. La cifra describe profundidades reportadas por USGS en el conjunto filtrado y no implica por sí sola mayor peligrosidad.
+4. **La asignación por país tiene una limitación de cobertura importante.** Solo 3.952 de 18.302 eventos de 2025 recibieron país; 14.350 (78,4 %) quedaron como «Sin país asignado». Entre los asignados, China tuvo 354, Chile 348 e Indonesia 306. Por el alto porcentaje sin asignación y la simplificación de Natural Earth, el ranking no debe interpretarse como distribución completa por país.
+
+Como comprobación de la integración y el rendimiento, el índice espacial procesó 10.000 eventos reales 2,05 veces más rápido que el recorrido lineal (2,428 s frente a 4,969 s). La medición no incluye red, Kafka ni escrituras PostgreSQL, y la extrapolación a 100 millones no es una prueba de escala.
 
 ## 8. Límites conocidos
 

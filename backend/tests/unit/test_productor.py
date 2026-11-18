@@ -226,3 +226,100 @@ def test_reintenta_fallos_transitorios_http(monkeypatch, codigo_transitorio) -> 
 
     assert resultado == {"type": "FeatureCollection", "features": []}
     assert len(pausas) == 1
+
+
+def test_descarga_registra_metricas_y_metadata_del_feed() -> None:
+    class Respuesta:
+        status_code = 200
+        content = b'{"type":"FeatureCollection","features":[]}'
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "type": "FeatureCollection",
+                "metadata": {"count": 0, "title": "USGS"},
+                "features": [],
+            }
+
+    class Sesion:
+        def get(self, *_args, **_kwargs) -> Respuesta:
+            return Respuesta()
+
+    diagnostico: dict[str, object] = {}
+    payload = productor.descargar_feed(
+        Sesion(), "https://example.test/feed", diagnostico=diagnostico
+    )
+
+    assert payload["features"] == []
+    assert diagnostico["http_status"] == 200
+    assert diagnostico["response_bytes"] == len(Respuesta.content)
+    assert diagnostico["latency_ms"] >= 0
+    assert diagnostico["source_metadata"] == {"count": 0, "title": "USGS"}
+
+
+def test_registra_consulta_con_metricas_y_retencion_de_30_dias() -> None:
+    class Cursor:
+        def __init__(self) -> None:
+            self.statements: list[tuple[str, tuple]] = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def execute(self, statement: str, parameters=()) -> None:
+            self.statements.append((statement, parameters))
+
+        def fetchone(self):
+            return (42,)
+
+    class Connection:
+        def __init__(self) -> None:
+            self.cursor_instance = Cursor()
+            self.commits = 0
+
+        def cursor(self) -> Cursor:
+            return self.cursor_instance
+
+        def commit(self) -> None:
+            self.commits += 1
+
+    connection = Connection()
+    requested_at = datetime(2026, 11, 18, 8, 0, tzinfo=timezone.utc)
+    completed_at = datetime(2026, 11, 18, 8, 0, 1, tzinfo=timezone.utc)
+
+    consulta_id = productor.registrar_consulta_usgs(
+        connection,
+        requested_at=requested_at,
+        completed_at=completed_at,
+        url="https://example.test/feed",
+        diagnostico={
+            "http_status": 200,
+            "response_bytes": 2048,
+            "latency_ms": 125.5,
+            "source_metadata": {"count": 3},
+        },
+        feature_count=3,
+        error=None,
+    )
+
+    assert consulta_id == 42
+    assert connection.commits == 1
+    insert, insert_params = connection.cursor_instance.statements[0]
+    assert "INSERT INTO consulta_usgs" in insert
+    assert insert_params[:8] == (
+        requested_at,
+        completed_at,
+        "https://example.test/feed",
+        "ok",
+        200,
+        2048,
+        125.5,
+        3,
+    )
+    delete, delete_params = connection.cursor_instance.statements[1]
+    assert "INTERVAL '30 days'" in delete
+    assert delete_params == (completed_at,)

@@ -30,14 +30,21 @@ class IndicePaises:
     indice_espacial: Any
 
     def country_for_point(self, longitude: float, latitude: float) -> str | None:
-        """Devuelve el país que contiene el punto, o None si no cae en un polígono."""
+        """Asigna el primer código en orden si polígonos solapados contienen el punto."""
         punto = Point(longitude, latitude)
         posiciones = self.indice_espacial.query(punto, predicate="within")
-        for posicion in posiciones:
-            country_id = self.geodataframe.iloc[int(posicion)]["ADM0_A3"]
-            if isinstance(country_id, str) and country_id:
-                return country_id
-        return None
+        country_ids = sorted(
+            {
+                country_id
+                for posicion in posiciones
+                if isinstance(
+                    (country_id := self.geodataframe.iloc[int(posicion)]["ADM0_A3"]),
+                    str,
+                )
+                and country_id
+            }
+        )
+        return country_ids[0] if country_ids else None
 
 
 @dataclass(frozen=True)

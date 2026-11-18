@@ -268,22 +268,37 @@ def test_cors_preflight_localhost_y_header_ngrok(cliente) -> None:
     assert "ngrok-skip-browser-warning" in response.headers["access-control-allow-headers"]
 
 
-def test_cors_preflight_admite_subdominio_de_netlify(cliente) -> None:
+def test_cors_preflight_admite_el_origen_publicado(cliente) -> None:
     test_client, _ = cliente
 
     response = test_client.options(
         "/api/eventos",
         headers={
-            "Origin": "https://observatorio-preview.netlify.app",
+            "Origin": "https://proyectoobservatoriosismico.netlify.app",
             "Access-Control-Request-Method": "GET",
             "Access-Control-Request-Headers": "ngrok-skip-browser-warning",
         },
     )
 
     assert response.status_code == 200
-    assert response.headers["access-control-allow-origin"] == "https://observatorio-preview.netlify.app"
+    assert response.headers["access-control-allow-origin"] == "https://proyectoobservatoriosismico.netlify.app"
     assert "GET" in response.headers["access-control-allow-methods"]
     assert "ngrok-skip-browser-warning" in response.headers["access-control-allow-headers"]
+
+
+def test_cors_rechaza_un_subdominio_netlify_no_configurado(cliente) -> None:
+    test_client, _ = cliente
+
+    response = test_client.options(
+        "/api/eventos",
+        headers={
+            "Origin": "https://preview-no-configurado.netlify.app",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "access-control-allow-origin" not in response.headers
 
 
 def test_origen_netlify_es_configurable(monkeypatch) -> None:
@@ -293,6 +308,7 @@ def test_origen_netlify_es_configurable(monkeypatch) -> None:
     assert api._origenes_cors() == [
         "http://localhost:4200",
         "https://observatorio-ejemplo.netlify.app",
+        "https://proyectoobservatoriosismico.netlify.app",
     ]
 
 

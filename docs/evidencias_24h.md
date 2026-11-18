@@ -207,3 +207,65 @@ La memoria ya contenía mediciones de ejecución con las primeras entidades **re
 | 10.000 | 2,428 s | 0,145 MiB | 4,969 s | 0,137 MiB | 169,68 / 169,57 MiB |
 
 El método, equipo, interpretación de `tracemalloc`/RSS y limitaciones están descritos en [memoria.md](./memoria.md), sección 5.
+
+## 5. Verificación tras desplegar la auditoría USGS
+
+**Corte:** 18 de noviembre de 2026, UTC. Se aplicó la migración idempotente `sql/002_consulta_usgs.sql` al volumen PostgreSQL existente y se recrearon API, productor y consumidor. No se eliminaron ni reinicializaron los datos históricos.
+
+### Sondeos USGS registrados
+
+La tabla comenzó a registrar consultas a las `09:03:45Z`. Cuatro sondeos consecutivos, hasta `09:06:45Z`, finalizaron con HTTP 200. Las respuestas tuvieron 214–215 features, ocuparon entre 152.730 y 153.427 bytes y tardaron entre 17,292 y 76,630 ms. La muestra son cuatro observaciones inmediatamente posteriores a la migración; no demuestra continuidad ni representa una latencia media.
+
+```sql
+SELECT id, requested_at, completed_at, status, http_status,
+       response_bytes, latency_ms, feature_count, published_count
+FROM consulta_usgs
+ORDER BY id DESC
+LIMIT 10;
+```
+
+| Sondeo UTC | Estado/HTTP | Bytes | Latencia ms | Features | Publicados |
+|---|---:|---:|---:|---:|---:|
+| 09:03:45 | ok / 200 | 152.730 | 76,630 | 214 | 1 |
+| 09:04:45 | ok / 200 | 153.427 | 20,142 | 215 | 1 |
+| 09:05:45 | ok / 200 | 153.427 | 17,292 | 215 | 0 |
+| 09:06:45 | ok / 200 | 153.427 | 19,278 | 215 | 0 |
+
+### Calidad y periodo consultado
+
+En la captura de la API a las `09:06:05Z`, la ventana live predeterminada de 24 horas devolvió 212 eventos; 32 tenían magnitud `>=4`. La tabla `evento_actual` tenía 2.487 eventos live en total, 433 sin país, 37 magnitudes negativas y 36 profundidades negativas. Los valores negativos se conservan porque no son por sí solos inválidos según la fuente y el contrato.
+
+```sql
+SELECT mode, count(*) AS rows,
+       count(*) FILTER (WHERE mag >= 4) AS magnitude_ge_4,
+       count(*) FILTER (WHERE country_id IS NULL) AS no_country,
+       count(*) FILTER (WHERE mag < 0) AS negative_magnitude,
+       count(*) FILTER (WHERE depth_km < 0) AS negative_depth
+FROM evento_actual
+GROUP BY mode
+ORDER BY mode;
+
+SELECT count(*) AS live_last_24h,
+       count(*) FILTER (WHERE mag >= 4) AS live_last_24h_mag_ge_4
+FROM evento_actual
+WHERE mode = 'live' AND event_time >= now() - interval '24 hours';
+```
+
+La reproducción mundial de 2025 con `mag >= 4` contenía 18.302 eventos, con una media de 50,142 por día contando los 365 días. De ellos, 16.173 (88,37 %) estaban en el intervalo `[4, 5)`, 12.455 (68,05 %) tenían profundidad en `[0, 50)` km y 14.350 (78,4 %) carecían de país asignado.
+
+```sql
+SELECT count(*) AS historical_2025_mag_ge_4,
+       round((count(*) / 365.0)::numeric, 3) AS daily_average,
+       count(*) FILTER (WHERE mag >= 4 AND mag < 5) AS mag_4_to_5,
+       count(*) FILTER (WHERE depth_km >= 0 AND depth_km < 50) AS depth_0_to_50,
+       count(*) FILTER (WHERE country_id IS NULL) AS no_country
+FROM evento_actual
+WHERE mode = 'replay'
+  AND event_time >= '2025-01-01'
+  AND event_time <  '2026-01-01'
+  AND mag >= 4;
+```
+
+La API permitió el origen local exacto `http://localhost:4200` (respuesta HTTP 200 con `Access-Control-Allow-Origin: http://localhost:4200`). Un origen Netlify preview no configurado recibió HTTP 200, pero sin ese encabezado, por lo que un navegador no expone la respuesta al JavaScript de ese origen. La prueba cubre CORS de la API local, no el túnel ngrok ni el despliegue público.
+
+Las imágenes generadas con datos de la API local están en [panel live](./evidencias/panel-live-2026-11-18.png) y [panel replay 2025](./evidencias/panel-replay-2025-2026-11-18.png). El build backend terminó correctamente, `docker compose config --quiet` pasó, los cinco servicios quedaron saludables, pasaron 42 pruebas backend y `npm run build` de Angular finalizó correctamente.

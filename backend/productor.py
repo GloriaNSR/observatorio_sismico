@@ -45,6 +45,7 @@ def descargar_feed(
     timeout: float = 15,
     max_intentos: int = 5,
     espera_inicial: float | None = None,
+    diagnostico: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Descarga y valida el FeatureCollection; reintenta fallos HTTP/red transitorios."""
     espera = (
@@ -55,8 +56,17 @@ def descargar_feed(
     espera_maxima = float(os.getenv("USGS_RETRY_MAX_SECONDS", "30"))
 
     for intento in range(1, max_intentos + 1):
+        inicio_intento = time.monotonic()
         try:
             respuesta = sesion.get(url, timeout=timeout)
+            if diagnostico is not None:
+                diagnostico.update(
+                    http_status=respuesta.status_code,
+                    response_bytes=len(respuesta.content),
+                    latency_ms=round(
+                        (time.monotonic() - inicio_intento) * 1000, 3
+                    ),
+                )
             respuesta.raise_for_status()
             payload = respuesta.json()
             if (
@@ -65,9 +75,22 @@ def descargar_feed(
                 or not isinstance(payload.get("features"), list)
             ):
                 raise ValueError("La respuesta USGS no es un FeatureCollection válido")
+            if diagnostico is not None:
+                metadata = payload.get("metadata")
+                diagnostico["source_metadata"] = (
+                    metadata if isinstance(metadata, dict) else {}
+                )
             return payload
         except requests.HTTPError as error:
             codigo = error.response.status_code if error.response is not None else None
+            if diagnostico is not None and error.response is not None:
+                diagnostico.update(
+                    http_status=codigo,
+                    response_bytes=len(error.response.content),
+                    latency_ms=round(
+                        (time.monotonic() - inicio_intento) * 1000, 3
+                    ),
+                )
             reintentable = codigo == 429 or (
                 codigo is not None and 500 <= codigo <= 599
             )
@@ -91,6 +114,10 @@ def descargar_feed(
                 retraso,
             )
         except (requests.Timeout, requests.ConnectionError) as error:
+            if diagnostico is not None:
+                diagnostico["latency_ms"] = round(
+                    (time.monotonic() - inicio_intento) * 1000, 3
+                )
             if intento == max_intentos:
                 raise
             retraso = min(espera, espera_maxima)
@@ -106,6 +133,66 @@ def descargar_feed(
         espera = min(max(espera * 2, 0.1), espera_maxima)
 
     raise RuntimeError("Se agotaron los reintentos del feed USGS")
+
+
+def registrar_consulta_usgs(
+    conexion,
+    *,
+    requested_at: datetime,
+    completed_at: datetime,
+    url: str,
+    diagnostico: dict[str, Any],
+    feature_count: int | None,
+    error: str | None,
+) -> int:
+    """Persiste metadatos de extracción y conserva solo los últimos 30 días."""
+    status = "error" if error is not None else "ok"
+    metadata = diagnostico.get("source_metadata", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    with conexion.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO consulta_usgs (
+                requested_at, completed_at, source_url, status, http_status,
+                response_bytes, latency_ms, feature_count, source_metadata, error
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+            RETURNING id
+            """,
+            (
+                requested_at,
+                completed_at,
+                url,
+                status,
+                diagnostico.get("http_status"),
+                diagnostico.get("response_bytes"),
+                diagnostico.get("latency_ms"),
+                feature_count,
+                json.dumps(metadata, allow_nan=False, separators=(",", ":")),
+                error,
+            ),
+        )
+        consulta_id = cursor.fetchone()[0]
+        cursor.execute(
+            "DELETE FROM consulta_usgs WHERE requested_at < %s - INTERVAL '30 days'",
+            (completed_at,),
+        )
+    conexion.commit()
+    return consulta_id
+
+
+def registrar_eventos_publicados(
+    conexion, consulta_id: int, published_count: int
+) -> None:
+    """Asocia a la consulta el número de eventos que el productor publicó."""
+    with conexion.cursor() as cursor:
+        cursor.execute(
+            "UPDATE consulta_usgs SET published_count = %s WHERE id = %s",
+            (published_count, consulta_id),
+        )
+    conexion.commit()
 
 
 def validar_feature(feature: Any) -> tuple[str, int]:
@@ -241,15 +328,48 @@ async def main() -> None:
             try:
                 if conexion is None or conexion.closed:
                     conexion = conectar_postgres()
-                payload = descargar_feed(
-                    sesion, url, timeout=timeout, max_intentos=max_intentos
-                )
+                requested_at = datetime.now(timezone.utc)
+                diagnostico: dict[str, Any] = {}
+                try:
+                    payload = descargar_feed(
+                        sesion,
+                        url,
+                        timeout=timeout,
+                        max_intentos=max_intentos,
+                        diagnostico=diagnostico,
+                    )
+                except (requests.RequestException, ValueError) as error:
+                    registrar_consulta_usgs(
+                        conexion,
+                        requested_at=requested_at,
+                        completed_at=datetime.now(timezone.utc),
+                        url=url,
+                        diagnostico=diagnostico,
+                        feature_count=None,
+                        error=str(error),
+                    )
+                    raise
+
                 instante = datetime.now(timezone.utc)
+                consulta_id = registrar_consulta_usgs(
+                    conexion,
+                    requested_at=requested_at,
+                    completed_at=instante,
+                    url=url,
+                    diagnostico=diagnostico,
+                    feature_count=len(payload["features"]),
+                    error=None,
+                )
                 cantidad = await procesar_eventos(
                     payload["features"], productor, conexion, instante
                 )
+                registrar_eventos_publicados(conexion, consulta_id, cantidad)
                 LOGGER.info(
-                    "Consulta USGS correcta: %d eventos leídos, %d publicados",
+                    "Consulta USGS correcta: HTTP %s, %.1f ms, %s bytes, "
+                    "%d eventos leídos, %d publicados",
+                    diagnostico.get("http_status"),
+                    diagnostico.get("latency_ms", 0),
+                    diagnostico.get("response_bytes", 0),
                     len(payload["features"]),
                     cantidad,
                 )

@@ -1,217 +1,201 @@
 # Observatorio sísmico
 
-Flujo de procesamiento de eventos USGS con cinco servicios Docker Compose: PostgreSQL, Kafka, productor, consumidor y API FastAPI. El panel Angular se ejecuta en el equipo anfitrión; no es un sexto contenedor.
+Aplicación para ingerir, validar y visualizar terremotos publicados por el USGS. El flujo combina Kafka y PostgreSQL para procesar eventos en tiempo real y reproducir un histórico, mientras que una API FastAPI entrega los datos a un panel Angular con mapa y estadísticas.
 
-## Resumen técnico para la defensa
+**Panel publicado:** [proyectoobservatoriosismico.netlify.app](https://proyectoobservatoriosismico.netlify.app)
 
-### Arquitectura
+**Documentación principal:** [contrato de la API](./CONTRATO-API.md) · [memoria técnica y resultados](./docs/memoria.md) · [evidencias de aceptación](./docs/evidencias/aceptacion.md)
 
-| Contenedor | Responsabilidad |
+> El panel publicado necesita que la API y su túnel HTTPS estén disponibles para mostrar datos en vivo. Si no puede conectarse, conserva la última respuesta válida e informa del estado de conexión.
+
+## Qué hace
+
+- Consulta periódicamente el feed GeoJSON del USGS y publica nuevos eventos y revisiones en Kafka.
+- Valida la estructura, los tiempos, los valores y las coordenadas; conserva los mensajes inválidos en cuarentena con su motivo y contenido original.
+- Asigna países a los eventos mediante un catálogo de 177 países. Los eventos válidos sin país —por ejemplo, los que ocurren en el mar— se conservan.
+- Guarda el estado actual y el historial de revisiones en PostgreSQL. Reintentar una versión no crea duplicados y una revisión antigua no reemplaza una más reciente.
+- Registra metadatos de cada consulta live al USGS y elimina esos registros al superar 30 días; conserva el GeoJSON original por versión o en cuarentena, no una copia completa repetida por sondeo.
+- Expone eventos, salud y estadísticas mediante una API; el panel permite explorar los datos en un mapa y una tabla.
+- Permite descargar y reproducir en modo separado (`replay`) el histórico de terremotos de 2025.
+
+## Arquitectura
+
+```text
+USGS ──> productor ──> Kafka (terremotos) ──> consumidor ──> PostgreSQL
+                                                        └──> cuarentena
+                                                        PostgreSQL ──> API FastAPI
+                                                                         └──> Angular + Leaflet
+```
+
+Compose levanta cinco servicios. El frontend se ejecuta en el equipo local o se publica en Netlify; no es un sexto contenedor.
+
+| Servicio | Función |
 |---|---|
-| `postgres` | PostgreSQL 16: dimensiones, eventos vigentes y revisiones, cuarentena y marcas de ingesta. |
-| `kafka` | Kafka 3.9.1 en KRaft de un nodo: canal `terremotos` y offsets del consumidor. |
-| `productor` | Consulta USGS cada 60 s, compara `(id, updated)` y publica revisiones nuevas con confirmación de Kafka. También ejecuta la carga histórica. |
-| `consumidor` | Valida el GeoJSON, busca el país entre 177 polígonos y guarda el evento o el rechazo en PostgreSQL. |
-| `api` | FastAPI: consulta los eventos, el estado del servicio y las estadísticas. |
+| `postgres` | PostgreSQL 16: países, eventos actuales, revisiones, cuarentena, auditoría de consultas y estado de ingesta. |
+| `kafka` | Kafka 3.9.1 en modo KRaft de un nodo; tema `terremotos`. |
+| `productor` | Consulta el feed en tiempo real y ofrece la carga y reproducción del histórico. |
+| `consumidor` | Valida eventos, asigna país y persiste o pone en cuarentena cada mensaje. |
+| `api` | API FastAPI para eventos, salud y estadísticas. |
+| `frontend/` | Aplicación Angular y Leaflet, independiente de Compose. |
 
-Angular/Leaflet se sirve desde el equipo local o Netlify, fuera de Compose. La memoria describe el modelo, la transacción de idempotencia y las decisiones de escalado.
+### Estructura del repositorio
 
-### Reglas de calidad y ejemplos de cuarentena
-
-| Regla | Tratamiento |
+| Ruta | Contenido |
 |---|---|
-| GeoJSON `Feature`, tipo `earthquake` y geometría `Point` | La forma incorrecta o los tipos distintos se rechazan con motivo y JSON original en cuarentena. |
-| `id`, `time` y `updated` válidos | Se requieren identificador no vacío y tiempos Unix en milisegundos. La pareja `(id, updated)` distingue las revisiones. |
-| Coordenadas numéricas finitas dentro de WGS84 | Un punto inválido va a cuarentena; uno válido que no cruza ningún país se conserva con `country_id: null`. |
-| Magnitud y profundidad numéricas o nulas | `NULL` se preserva; nunca se convierte en cero. |
-| Actualización idempotente | Se inserta la revisión una sola vez y el UPSERT actual solo avanza si aumenta `updated_ms`; PostgreSQL confirma antes del offset Kafka. |
-
-Casos reales consultados en la base de datos: `ok2026vshf` (`quarry blast`) y `uw714132811` (`explosion`) quedaron en cuarentena porque el tipo requerido era `earthquake`. La [memoria](./docs/memoria.md) incluye sus coordenadas, motivos completos y la tabla detallada de reglas.
-
-### Pruebas de aceptación ejecutadas
-
-| # | Escenario | Resultado |
-|---:|---|---|
-| 1 | Ingesta de un evento nuevo | Aprobado; persistido y visible por API/panel con país asignado. |
-| 2 | Reenvío de la misma versión | Aprobado; sin versión duplicada. |
-| 3 | Recepción de una revisión posterior | Aprobado; queda vigente el mayor `updated_ms`. |
-| 4 | Recepción tardía de revisión antigua | Aprobado; historial conservado, estado actual sin retroceso. |
-| 5 | Magnitud nula | Aprobado; `NULL` conservado y excluido por `min_mag`. |
-| 6 | Coordenadas inválidas y `quarry blast` | Aprobado; rechazados con motivo y mensaje original en cuarentena. |
-| 7 | Evento marítimo | Aprobado; `country_id: null`, visible como «Sin país asignado». |
-| 8 | Reinicio del consumidor | Aprobado; offset 19363, lag cero, 18.302 registros replay estables. |
-| 9 | Fallo de conexión del panel | Aprobado mediante interceptación local; conservó las 180 filas. No hubo ngrok real. |
-| 10 | Recuperación de conexión | Aprobado al retirar la interceptación; no demuestra TLS/CORS de ngrok. |
-| 11 | Aislamiento `replay`/`live` | Aprobado; el evento replay no aparece en live y sus revisiones son idempotentes. |
-
-Validación transversal: los tres endpoints devolvieron HTTP 200, las 37 pruebas del servidor y las 2 de infraestructura pasaron, y Angular compiló correctamente.
-
-### Rendimiento, complejidad y coste
-
-Medición sobre eventos reales del histórico 2025; el índice espacial se construyó antes del cronómetro. Los detalles del entorno y las limitaciones de memoria están en la [memoria](./docs/memoria.md).
-
-| Eventos | Tiempo con índice espacial | Memoria Python adicional | RSS máximo del proceso |
-|---:|---:|---:|---:|
-| 100 | 0,039 s | 0,020 MiB | 168,61 MiB |
-| 1.000 | 0,393 s | 0,095 MiB | 169,55 MiB |
-| 10.000 | 2,428 s | 0,145 MiB | 169,68 MiB |
-
-Con 177 países, una búsqueda lineal cuesta `O(N·177)`; el índice espacial tiene coste esperado `O(177 log 177 + N log 177)` y memoria `O(177)`. A 10.000 eventos midió 2,05 veces más rápido que la búsqueda lineal. Como referencia no contractual, la memoria estima unos 147 GB para 100 millones de eventos y su historial equivalente; dos copias serían unos 441 GB antes de WAL, espacio libre y revisiones adicionales. El coste monetario en nube depende de proveedor, región, cómputo, transferencia y retención, por lo que no se inventa una cotización.
-
-### Tres conclusiones
-
-1. El índice PIP mejora el tiempo medido con 10.000 eventos de 4,969 s a 2,428 s; para volúmenes mayores se requieren pruebas de carga, lotes y particiones Kafka adicionales.
-2. PostgreSQL antes de confirmar el offset, junto con la unicidad `(event_id, updated_ms, mode)`, evitó duplicados durante reenvíos y reinicio; el histórico se mantuvo en 18.302 filas.
-3. La ubicación geográfica no es una regla de validez: 14.350 de 18.302 eventos replay (78,4 %) carecen de país pero siguen siendo analizables; eventos no sísmicos sí se ponen en cuarentena con su explicación.
+| `backend/` | Productor, consumidor, cargador histórico, API y pruebas. |
+| `frontend/` | Aplicación Angular, configuración, mapa y datos de demostración. |
+| `sql/init.sql` | Esquema y datos iniciales de PostgreSQL. |
+| `datos/historico/2025/` | Caché local del histórico; no se incluye en Git. |
+| `docs/` | Memoria técnica y evidencias de las pruebas ejecutadas. |
+| `CONTRATO-API.md` | Parámetros y formato de las respuestas de la API. |
+| `FUENTES-Y-LICENCIAS.md` | Procedencia y licencias de los datos y recursos. |
 
 ## Requisitos
 
 - Docker Desktop con Docker Compose v2.
-- Node.js 22.12 o posterior dentro de la rama 22, o Node 24, y npm.
-- Conexión a Internet para descargar el histórico si no existe una copia local.
-- ngrok y una cuenta Netlify solo si se va a publicar el panel/API.
+- Node.js `22.12+` (rama 22) o Node.js 24, y npm para ejecutar o compilar el frontend.
+- Acceso a Internet para consultar el feed y descargar el histórico cuando no exista una copia local.
+- ngrok y una cuenta Netlify solo para publicar y conectar el panel con la API local.
 
-## 1. Configuración y arranque desde cero
+## Puesta en marcha local
 
-Desde la raíz del repositorio, crea la configuración local y cambia las contraseñas de ejemplo antes de exponer nada:
+Los comandos siguientes se ejecutan en PowerShell desde la raíz del repositorio.
+
+1. Crea la configuración local y cambia la contraseña de ejemplo antes de exponer servicios:
+
+   ```powershell
+   if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+   notepad .env
+   ```
+
+   Si ya existe `.env`, no hace falta volver a copiarlo. No publiques ese archivo ni incluyas credenciales en el frontend.
+
+2. Construye y arranca los servicios:
+
+   ```powershell
+   docker compose up --build -d
+   docker compose ps
+   docker compose config --quiet
+   ```
+
+   Espera a que los cinco servicios estén saludables. La API local queda disponible en `http://127.0.0.1:8000`; PostgreSQL y Kafka solo se exponen dentro de la red de Compose.
+
+   Si ya conservas un volumen PostgreSQL de una versión anterior, vuelve a aplicar el SQL idempotente para crear las tablas añadidas:
+
+   ```powershell
+   docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -f /docker-entrypoint-initdb.d/002-consulta_usgs.sql'
+   ```
+
+3. Comprueba la salud y los datos:
+
+   ```powershell
+   curl.exe http://127.0.0.1:8000/api/salud
+   curl.exe "http://127.0.0.1:8000/api/eventos?mode=live&limit=5"
+   curl.exe http://127.0.0.1:8000/api/estadisticas
+   ```
+
+   `/api/salud` debe indicar `status: ok` y `database: available`. El productor consulta el feed aproximadamente cada 60 segundos; los eventos aparecerán cuando el USGS publique datos.
+
+4. En otra terminal, inicia el panel:
+
+   ```powershell
+   cd frontend
+   npm ci
+   npm start
+   ```
+
+   Abre <http://localhost:4200>. Comprueba que `frontend/public/config.json` tenga en `apiBaseUrl` la dirección de la API que quieras usar (por ejemplo, `http://localhost:8000` para una API local). Para compilar la aplicación de producción, ejecuta `npm run build`; el resultado queda en `frontend/dist/observatorio/browser`.
+
+## API
+
+La API escucha en el puerto `8000` y ofrece:
+
+| Ruta | Descripción |
+|---|---|
+| `GET /api/salud` | Estado de la API, la base de datos y la ingesta. |
+| `GET /api/eventos` | Eventos GeoJSON, con filtros temporales, magnitud, país y modo. |
+| `GET /api/estadisticas` | Totales, distribución por país y distribución de magnitudes. |
+
+Ejemplo de consulta de reproducción:
 
 ```powershell
-if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-notepad .env
+curl.exe "http://127.0.0.1:8000/api/eventos?mode=replay&start=2025-01-01T00:00:00Z&end=2026-01-01T00:00:00Z&min_mag=4"
 ```
 
-Arranca la infraestructura completa con el único comando de inicio:
+`start` es inclusivo, `end` exclusivo y `min_mag` no incluye magnitudes nulas. El modo predeterminado es `live`; `country_id=unassigned` selecciona eventos válidos sin país asignado. Consulta el [contrato de la API](./CONTRATO-API.md) para el detalle de parámetros y respuestas.
 
-```powershell
-docker compose up --build -d
-docker compose ps
-docker compose config --quiet
-```
+## Cargar el histórico de 2025
 
-Espera a que los cinco servicios indiquen `healthy` (saludable). La API queda enlazada a `127.0.0.1:8000`; PostgreSQL y Kafka solo son accesibles desde la red de Compose. De forma predeterminada, el productor consulta cada 60 segundos el canal de eventos en tiempo real de USGS.
-
-Comprueba la API:
-
-```powershell
-curl.exe http://127.0.0.1:8000/api/salud
-curl.exe "http://127.0.0.1:8000/api/eventos?mode=live&limit=5"
-curl.exe http://127.0.0.1:8000/api/estadisticas
-```
-
-`/api/salud` debe devolver `status: ok` y `database: available` (base de datos disponible). Verifica también el catálogo geográfico y los modos de procesamiento guardados:
-
-```powershell
-docker compose exec -T postgres psql -U observatorio -d observatorio -c "SELECT COUNT(*) AS paises FROM pais;"
-docker compose exec -T postgres psql -U observatorio -d observatorio -c "SELECT mode, COUNT(*) AS eventos FROM evento_actual GROUP BY mode ORDER BY mode;"
-docker compose exec -T postgres psql -U observatorio -d observatorio -c "SELECT mode, COUNT(*) AS versiones FROM evento_version GROUP BY mode ORDER BY mode;"
-```
-
-El catálogo contiene 177 países. Los archivos históricos se guardan bajo `datos/historico/2025/`, ruta excluida de Git; se descargan desde USGS cuando no hay copia local.
-
-## 2. Cargar y reproducir el histórico de 2025
-
-Para descargar el año completo desde USGS y publicarlo por Kafka en modo de reproducción histórica (`replay`):
+Con los servicios en ejecución, el cargador descarga el histórico desde USGS si no hay una copia local y después lo publica por Kafka en modo `replay`:
 
 ```powershell
 docker compose exec -T productor python cargar_historico.py
 ```
 
-El cargador usa consultas mensuales, divide los intervalos que se aproximan al límite de resultados, elimina duplicados en los extremos y conserva el manifiesto y GeoJSON en `datos/historico/2025/`. La ejecución predeterminada descarga y después reproduce el archivo. Si el histórico ya existe y solo quieres volver a reproducirlo:
+Para reproducir una copia ya descargada sin volver a consultar USGS:
 
 ```powershell
 docker compose exec -T productor python cargar_historico.py --accion solo-reproducir
 ```
 
-Otras opciones:
+También se puede usar `--accion solo-descargar` para descargar sin publicar, o añadir `--sin-casos-controlados` a la reproducción para omitir los eventos de demostración de duplicados y revisiones. Los datos se guardan en `datos/historico/2025/`, excluidos de Git. La separación entre `live` y `replay` evita mezclar los dos flujos en las consultas.
 
-```powershell
-docker compose exec -T productor python cargar_historico.py --accion solo-descargar
-docker compose exec -T productor python cargar_historico.py --accion solo-reproducir --sin-casos-controlados
-```
+## Pruebas y estado de validación
 
-El productor de reproducción histórica envía mensajes al tema Kafka existente; el mismo consumidor los valida y guarda con `mode=replay`. No se añade otro servicio y se conserva la hora original del evento. De forma predeterminada se incluyen eventos de prueba para demostrar duplicados y revisiones; `--sin-casos-controlados` los omite.
-
-Consulta los datos reproducidos por separado de los recibidos en tiempo real:
-
-```powershell
-curl.exe "http://127.0.0.1:8000/api/eventos?mode=replay&start=2025-01-01T00:00:00Z&end=2026-01-01T00:00:00Z&min_mag=4"
-curl.exe "http://127.0.0.1:8000/api/estadisticas?mode=replay&country_id=unassigned"
-```
-
-En los filtros de la API, `start` incluye el instante indicado, mientras que `end` lo excluye; ambos aceptan fechas ISO 8601 con zona horaria. `min_mag` excluye las magnitudes nulas. El valor reservado `country_id=unassigned` selecciona los eventos que no caen dentro de ningún polígono.
-
-## 3. Iniciar el frontend Angular
-
-En otra terminal, desde la raíz:
-
-```powershell
-cd frontend
-npm ci
-npm start
-```
-
-Abre <http://localhost:4200>. La configuración inicial de [frontend/public/config.json](./frontend/public/config.json) consulta `http://localhost:8000`; la configuración CORS permite solicitudes desde `http://localhost:4200`. Para compilar:
-
-```powershell
-npm run build
-```
-
-Los archivos generados quedan en `frontend/dist/observatorio/browser`. La tabla y las ayudas emergentes representan los valores ausentes como `ND`; los formatos habituales de ubicación de USGS (distancia y orientación) se muestran en español sin alterar el texto original guardado. Los eventos marítimos conservan `country_id: null` en la API y el panel los muestra como «Sin país asignado».
-
-## 4. Exponer la API con ngrok
-
-La API solo acepta conexiones locales. Instala y configura ngrok siguiendo las instrucciones de su proveedor, guarda el token de acceso en la configuración local de ngrok (nunca en Git ni en la aplicación web) y ejecuta desde el equipo anfitrión:
-
-```powershell
-ngrok http 8000
-```
-
-La URL pública de API de este despliegue es `https://vertebrae-giggling-hardwired.ngrok-free.dev`. En `frontend/public/config.json`, configura `apiBaseUrl` con esa URL **sin** añadir `/api`:
-
-```json
-{
-  "mode": "api",
-  "apiBaseUrl": "https://vertebrae-giggling-hardwired.ngrok-free.dev",
-  "refreshMs": 60000
-}
-```
-
-Añade el origen exacto del panel a `CORS_ORIGINS` en `.env` (separado por comas si hay más de uno), y reinicia la API:
-
-```powershell
-docker compose up -d --force-recreate api
-```
-
-El frontend envía siempre la cabecera `ngrok-skip-browser-warning` en sus peticiones a la API; CORS permite GET/OPTIONS y esa cabecera. El middleware admite `http://localhost:4200`, los subdominios HTTPS de `netlify.app` y los orígenes exactos adicionales indicados en `CORS_ORIGINS` o `NETLIFY_ORIGIN`; no usa credenciales. La API y el túnel deben seguir activos mientras se usa el panel. Si se interrumpe la conexión, la interfaz conserva la última lectura válida, muestra el error y cuánto tiempo ha pasado desde esa lectura, y vuelve a consultar automáticamente.
-
-## 5. Desplegar el frontend en Netlify
-
-La URL pública definitiva del panel Angular es **https://proyectoobservatoriosismico.netlify.app**. El sitio se publica como una SPA en Netlify y consulta la API FastAPI mediante el túnel HTTPS de ngrok; ambos, API y túnel, deben estar activos para que funcionen los datos en vivo.
-
-1. Publica el repositorio sin `.env`, credenciales ni `node_modules`.
-2. Conecta el repositorio a Netlify. Configura el campo **Base directory** (directorio base) como `frontend`.
-3. Usa `npm run build` como comando de compilación y `dist/observatorio/browser` como directorio que se publicará. [frontend/netlify.toml](./frontend/netlify.toml) ya contiene esos valores y `frontend/public/_redirects` permite recargar las rutas de la aplicación de una sola página (SPA).
-4. Configura `apiBaseUrl` en `frontend/public/config.json` como `https://vertebrae-giggling-hardwired.ngrok-free.dev` (sin `/api`) y vuelve a publicar para incluir la configuración.
-5. Si se usa un dominio personalizado, en `.env` define `NETLIFY_ORIGIN` con el origen exacto (sin ruta) y añádelo a `CORS_ORIGINS` junto con `http://localhost:4200`. Los sitios bajo `*.netlify.app` ya están permitidos por el patrón HTTPS del middleware.
-6. Aplica la configuración del servidor con `docker compose up -d --force-recreate api` y comprueba el panel y las tres rutas desde el sitio publicado.
-
-No guardes claves ni authtokens en `config.json`: se distribuye públicamente con la aplicación.
-
-## 6. Pruebas y parada segura
-
-Con los cinco servicios activos, las pruebas del servidor y las pruebas de aceptación se pueden ejecutar en un contenedor temporal:
+Las evidencias registradas incluyen pruebas unitarias, de contrato, integración y aceptación; además, se comprobó la compilación Angular. Con los cinco servicios activos, ejecuta:
 
 ```powershell
 docker compose run --rm --no-deps consumidor sh -c "pip install -r requirements-test.txt && python -m pytest -q tests/unit tests/contract tests/integration/test_pipeline.py tests/integration/test_replay.py tests/acceptance"
 python -m pytest -q backend/tests/integration/test_infraestructura.py
 ```
 
-Los escenarios y resultados observados están en [docs/evidencias/aceptacion.md](./docs/evidencias/aceptacion.md); el diseño, mediciones y decisiones están en [docs/memoria.md](./docs/memoria.md).
+Para compilar el frontend:
 
-Para detener los servicios conservando las bases de datos:
+```powershell
+cd frontend
+npm ci
+npm run build
+```
+
+En las evidencias del 6 de noviembre de 2026 constan 37 pruebas del servidor y 2 de infraestructura aprobadas, junto con la compilación Angular correcta. El 16 de noviembre se comprobó visualmente la versión publicada en Netlify y se levantó un túnel ngrok real: `/api/salud`, `/api/eventos` y `/api/estadisticas` respondieron HTTP 200; el preflight `OPTIONS` desde el origen Netlify también respondió 200 con CORS. En el navegador se verificaron datos live y el cambio a replay (18.302 registros del año 2025; 1.000 en la página y estadísticas completas). El 18 de noviembre pasaron 42 pruebas backend y el build Angular; también se verificaron los cinco servicios Compose, el CORS local y el registro de consultas USGS. No se publicó una nueva versión de Netlify. El panel público depende de que el túnel siga activo; si se cierra, deja de recibir datos. Los resultados detallados están en [evidencias de aceptación](./docs/evidencias/aceptacion.md) y [evidencias SQL del 18 de noviembre](./docs/evidencias_24h.md#5-verificación-tras-desplegar-la-auditoría-usgs).
+
+## Evaluación según la rúbrica
+
+El [enunciado oficial, §13](./ENUNCIADO.md#13-evaluación) evalúa cinco criterios. Esta tabla indica dónde está la evidencia existente y qué conviene explicar o mostrar para defender el nivel **sobresaliente**. El mapa por sí solo no sustituye los análisis ni sus resultados.
+
+| Criterio | Evidencias del proyecto | Para defender sobresaliente |
+|---|---|---|
+| **Extracción** — carga y análisis de tipos | [Memoria, §3: procedencia y carga histórica](./docs/memoria.md#3-procedencia-y-carga-histórica); [manifiesto del histórico](./datos/historico/2025/manifest.json); `backend/productor.py` y `backend/cargar_historico.py`. | Explicar la fuente live y las consultas históricas; distinguir GeoJSON, tipos, unidades y límites; enseñar las consultas mensuales, la deduplicación y cómo se regenera la caché. El histórico registrado contiene 18.302 eventos de 2025 con `minmagnitude=4`. |
+
+| **Calidad** — análisis completo y acciones | [Memoria, §4: calidad y cuarentena](./docs/memoria.md#4-calidad-de-datos-y-cuarentena); [consultas y resultados SQL, §2](./docs/evidencias_24h.md#2-cuarentena-y-calidad); `backend/consumidor.py`; pruebas de aceptación. | Presentar al menos cuatro dimensiones con denominador y resultados antes/después: completitud, unicidad, validez, consistencia de revisiones e integración geográfica. Justificar acciones (conservar nulos, poner tipos/coordenadas inválidos en cuarentena, no descartar eventos sin país), mostrar ejemplos y reconocer límites de la fuente y del periodo. |
+
+| **Modelado** — modelo optimizado | [Memoria, §2: modelo conceptual, lógico y físico](./docs/memoria.md#2-modelo-conceptual-lógico-y-físico); [`sql/init.sql`](./sql/init.sql); [contrato de la API](./CONTRATO-API.md); [pruebas de aceptación, escenarios 1–8 y 11](./docs/evidencias/aceptacion.md#once-escenarios-del-enunciado). | Explicar el grano de cada tabla, las claves y relaciones geográficas, el historial de revisiones, la idempotencia y por qué se usan las restricciones e índices existentes. Aclarar que la medición de almacenamiento a 100 millones es una extrapolación, no una prueba a esa escala. |
+
+| **Análisis** — análisis con insights | [Memoria, §3 y §7](./docs/memoria.md#7-conclusiones-del-análisis); panel: recuentos por país y subregión, actividad por hora, distribuciones de magnitud/profundidad y comparación histórica; [prueba visual y del túnel](./docs/evidencias/aceptacion.md#comprobación-visual-del-panel-y-del-túnel-real). | Relacionar al menos tres resultados con filtros y periodo: comparación de live con la media diaria de 2025 usando el mismo umbral, eventos sin país que siguen siendo válidos, y distribución temporal/por magnitud o profundidad. Explicar qué significan los resultados y sus límites, no solo leer el mapa. |
+
+| **Reflexión** — reflexión excelente y propuestas | [Memoria, §5, §7 y §8](./docs/memoria.md#5-rendimiento-y-complejidad); mediciones de 100, 1.000 y 10.000 eventos; [costes, escalado y mejoras](./docs/memoria.md#complejidad-almacenamiento-y-escalado). | Comparar complejidad, tiempo y memoria; justificar el índice espacial con sus límites; separar mediciones de extrapolaciones; declarar supuestos de coste y proponer mejoras priorizadas (lotes, particiones Kafka, particionado y pruebas de recuperación). |
+
+Para la defensa, lleva las consultas y tablas de la memoria junto con las capturas del [panel live](./docs/evidencias/panel-live-2026-11-18.png) y del [panel replay 2025](./docs/evidencias/panel-replay-2025-2026-11-18.png). Las imágenes muestran el periodo, el recuento y las distribuciones comunicados en la memoria.
+
+## Publicación del panel y acceso remoto
+
+Netlify publica el frontend como una SPA. La configuración registrada usa `frontend` como directorio base, `npm run build` como comando y `dist/observatorio/browser` como directorio de publicación. La URL del panel es [proyectoobservatoriosismico.netlify.app](https://proyectoobservatoriosismico.netlify.app).
+
+Para conectar el panel a la API local:
+
+1. Configura `apiBaseUrl` en `frontend/public/config.json` con la URL HTTPS vigente de ngrok, sin añadir `/api`.
+2. Inicia el túnel con `ngrok http 8000`. La API y el túnel deben permanecer activos para ofrecer datos en vivo.
+3. Añade el origen del panel a `CORS_ORIGINS` en `.env` y aplica los cambios con `docker compose up -d --force-recreate api`.
+4. Vuelve a compilar y publicar el frontend si cambiaste su configuración.
+
+La URL del túnel puede cambiar. No guardes tokens ni credenciales en `config.json`: el archivo se distribuye con el frontend público. Para dominios personalizados, configura el origen correspondiente en el servidor. La [memoria técnica](./docs/memoria.md) describe la configuración y las mediciones con más detalle.
+
+## Parada
+
+Detén los servicios conservando los datos persistentes:
 
 ```powershell
 docker compose down
 ```
 
-No uses `docker compose down -v` salvo que quieras borrar explícitamente los volúmenes persistentes de PostgreSQL y Kafka.
+No uses `docker compose down -v` salvo que quieras borrar explícitamente los volúmenes de PostgreSQL y Kafka.

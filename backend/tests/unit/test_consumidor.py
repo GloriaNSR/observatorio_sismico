@@ -3,6 +3,8 @@ import asyncio
 import pytest
 
 import consumidor
+import geopandas as gpd
+from shapely.geometry import box
 
 
 class IndiceSinPaises:
@@ -60,6 +62,20 @@ def test_conserva_nulos_y_valores_negativos() -> None:
 def test_rechaza_geometria_o_coordenadas_invalidas(geometry, motivo) -> None:
     with pytest.raises(ValueError, match=motivo):
         consumidor.validar_evento(feature(geometry=geometry), IndiceSinPaises())
+
+
+def test_frontera_no_se_asigna_y_solapamiento_es_determinista() -> None:
+    paises = gpd.GeoDataFrame(
+        {
+            "ADM0_A3": ["ZZZ", "AAA"],
+            "geometry": [box(0, 0, 2, 2), box(1, 1, 3, 3)],
+        },
+        crs="EPSG:4326",
+    )
+    indice = consumidor.IndicePaises(paises, paises.sindex)
+
+    assert indice.country_for_point(0, 1) is None
+    assert indice.country_for_point(1.5, 1.5) == "AAA"
 
 
 def test_offset_se_confirma_despues_de_la_persistencia(monkeypatch) -> None:
